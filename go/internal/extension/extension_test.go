@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"bytes"
 	"encoding/json"
 	"math/big"
 	"net"
@@ -232,42 +233,36 @@ func TestRegisterModelRejectsMalformedPlaintext(t *testing.T) {
 
 // Trust boundary invariant 1 (ARCHITECTURE.md §3): nothing the extension emits
 // may carry the model parameters.
+//
+// Blobs are searched as raw bytes, not as hex, so that a parameter's decimal
+// digits cannot match hex output by coincidence. A leak smuggled through the ABI
+// payload would not be a substring anyway — that path is covered by decoding the
+// decision and checking each field.
 func TestSecretModelNeverLeavesTheEnclave(t *testing.T) {
 	e := New(0, 0)
 
-	outputs := map[string]string{}
-
 	registerResult := registerModel(t, e, secretModel())
-	registerJSON, err := json.Marshal(registerResult)
-	if err != nil {
-		t.Fatalf("marshal register result: %v", err)
-	}
-	outputs["register result"] = string(registerJSON)
-
 	evaluateResult := evaluate(t, e, 500)
-	evaluateJSON, err := json.Marshal(evaluateResult)
-	if err != nil {
-		t.Fatalf("marshal evaluate result: %v", err)
-	}
-	outputs["evaluate result"] = string(evaluateJSON)
-
 	// A failed evaluation is the likeliest place for a parameter to slip into an
 	// error message, so cover it too.
 	failedResult := evaluate(t, New(0, 0), 500)
-	failedJSON, err := json.Marshal(failedResult)
-	if err != nil {
-		t.Fatalf("marshal failed result: %v", err)
-	}
-	outputs["failed evaluate result"] = string(failedJSON)
 
 	recorder := httptest.NewRecorder()
 	e.stateHandler(recorder, httptest.NewRequest(http.MethodGet, "/state", nil))
-	outputs["state response"] = recorder.Body.String()
 
-	for label, output := range outputs {
-		for _, secret := range secretStrings() {
-			if strings.Contains(output, secret) {
-				t.Errorf("%s leaks model parameter %q: %s", label, secret, output)
+	outputs := map[string][][]byte{
+		"register result":        {[]byte(registerResult.Log), registerResult.Data},
+		"evaluate result":        {[]byte(evaluateResult.Log), evaluateResult.Data},
+		"failed evaluate result": {[]byte(failedResult.Log), failedResult.Data},
+		"state response":         {recorder.Body.Bytes()},
+	}
+
+	for label, blobs := range outputs {
+		for _, blob := range blobs {
+			for _, secret := range secretStrings() {
+				if bytes.Contains(blob, []byte(secret)) {
+					t.Errorf("%s leaks model parameter %q: %s", label, secret, blob)
+				}
 			}
 		}
 	}

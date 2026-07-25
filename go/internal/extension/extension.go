@@ -188,15 +188,63 @@ func (e *Extension) processEvaluate(action teetypes.Action, df *instruction.Data
 	return buildResult(action, df, encoded, 1, nil)
 }
 
-// evaluatePayout is the confidential scoring function.
+// bps is one hundred percent in basis points.
+var bps = big.NewInt(10_000)
+
+// evaluatePayout is the confidential scoring function — the reason Aegis needs a
+// TEE at all. It runs only inside the enclave and its inputs are never echoed.
 //
-// Fase 1 placeholder: the routing, decoding and signing path is complete, but
-// the model is not consulted yet — every evaluation settles to zero. Fase 2
-// replaces this body with the real hidden ramp.
+// The cover is a drought indemnity with a hidden linear ramp:
+//
+//	rainfall >= trigger          → nothing is owed
+//	rainfall <= exit             → the full sum insured (times the hidden factor)
+//	exit < rainfall < trigger    → pro rata along the ramp
+//
+// then scaled by PayoutFactorBps, capped at the sum insured, and finally rounded
+// down to zero if it lands under the dust floor.
+//
+// All arithmetic is integer big.Int on purpose: two enclaves scoring the same
+// reading must produce byte-identical results, and floating point would not
+// guarantee that.
 func evaluatePayout(model *types.ModelParameters, rainfallTenthsMm *big.Int) (*big.Int, error) {
 	if rainfallTenthsMm == nil || rainfallTenthsMm.Sign() < 0 {
 		return nil, fmt.Errorf("rainfall must not be negative")
 	}
+	// Defence in depth: registration already validated the model, but scoring an
+	// unvalidated one could divide by zero.
+	if err := model.Validate(); err != nil {
+		return nil, err
+	}
 
-	return new(big.Int), nil
+	trigger := new(big.Int).SetUint64(model.TriggerTenthsMm)
+	exit := new(big.Int).SetUint64(model.ExitTenthsMm)
+
+	// Rain at or above the trigger: the policy simply does not respond.
+	if rainfallTenthsMm.Cmp(trigger) >= 0 {
+		return new(big.Int), nil
+	}
+
+	// span > 0 because Validate() rejects exit >= trigger.
+	span := new(big.Int).Sub(trigger, exit)
+	shortfall := new(big.Int).Sub(trigger, rainfallTenthsMm)
+	if shortfall.Cmp(span) > 0 {
+		shortfall = span
+	}
+
+	// payout = sumInsured * shortfall * factorBps / (span * 10000), truncated.
+	payout := new(big.Int).Mul(model.SumInsuredWei, shortfall)
+	payout.Mul(payout, new(big.Int).SetUint64(model.PayoutFactorBps))
+	payout.Div(payout, new(big.Int).Mul(span, bps))
+
+	// A factor above 100% must not let a policy pay more than it insures.
+	if payout.Cmp(model.SumInsuredWei) > 0 {
+		payout.Set(model.SumInsuredWei)
+	}
+
+	// Dust floor: a payout worth less than its own settlement cost pays nothing.
+	if payout.Cmp(model.MinPayoutWei) < 0 {
+		return new(big.Int), nil
+	}
+
+	return payout, nil
 }

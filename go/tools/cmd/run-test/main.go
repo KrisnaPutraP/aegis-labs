@@ -1,12 +1,12 @@
 // Package main runs the Aegis extension end-to-end test:
-//   1. setExtensionId on the deployed InstructionSender (idempotent)
-//   2. fetch TEE public key from the extension proxy
-//   3. ECIES-encrypt the insurer's confidential model under the TEE pubkey
-//   4. send registerModel on-chain, poll for result
-//   5. send evaluate(policyId, rainfall, payoutTo) on-chain for a dry reading
-//      and for a wet reading, poll for both results
-//   6. ABI-decode (bytes32 policyId, uint256 payoutAmount, address payoutTo)
-//      from each result and check the decision against what the model implies
+//  1. setExtensionId on the deployed InstructionSender (idempotent)
+//  2. fetch TEE public key from the extension proxy
+//  3. ECIES-encrypt the insurer's confidential model under the TEE pubkey
+//  4. send registerModel on-chain, poll for result
+//  5. send evaluate(policyId, rainfall, payoutTo) on-chain for a dry reading
+//     and for a wet reading, poll for both results
+//  6. ABI-decode (bytes32 policyId, uint256 payoutAmount, address payoutTo)
+//     from each result and check the decision against what the model implies
 //
 // The model parameters live in this file only because the test plays the role of
 // the insurer: it is the one party that legitimately knows them. They travel to
@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
@@ -132,7 +133,7 @@ func main() {
 	logger.Infof("  Policy ID: %s", testPolicyID.Hex())
 	logger.Infof("  Encrypted model: %d bytes (plaintext never leaves this process)", len(ciphertext))
 
-	assertNoSecrets("registerModel instruction message", hex.EncodeToString(ciphertext))
+	assertSealed(plaintext, ciphertext)
 
 	// --- Step 3: registerModel ---
 	logger.Infof("Step 3: Sending registerModel instruction on-chain...")
@@ -154,7 +155,7 @@ func main() {
 		fccutils.FatalWithCause(errors.Errorf("registerModel instruction failed: %s", registerResp.Result.Log))
 	}
 	logger.Infof("  registerModel succeeded (status=%d)", registerResp.Result.Status)
-	assertNoSecrets("registerModel action result", fmt.Sprintf("%s %x", registerResp.Result.Log, registerResp.Result.Data))
+	assertNoSecrets("registerModel action result", []byte(registerResp.Result.Log), registerResp.Result.Data)
 
 	// --- Step 5 & 6: evaluate a dry reading and a wet reading ---
 	dryPayout := runEvaluate(testSupport, instructionSenderAddress, *pf, "dry season (drought)", big.NewInt(600))
@@ -232,7 +233,7 @@ func runEvaluate(
 	logger.Infof("  TEE signature: %s", hex.EncodeToString(resp.Signature))
 
 	assertNoSecrets(fmt.Sprintf("evaluate action result (%s)", label),
-		fmt.Sprintf("%s %x", resp.Result.Log, resp.Result.Data))
+		[]byte(resp.Result.Log), resp.Result.Data)
 
 	return decision.PayoutAmount
 }
@@ -257,17 +258,37 @@ func expectedPayout(m types.ModelParameters, rainfallTenthsMm *big.Int) *big.Int
 	payout.Mul(payout, new(big.Int).SetUint64(m.PayoutFactorBps))
 	payout.Div(payout, new(big.Int).Mul(span, big.NewInt(10_000)))
 
+	if payout.Cmp(m.SumInsuredWei) > 0 {
+		payout.Set(m.SumInsuredWei)
+	}
 	if payout.Cmp(m.MinPayoutWei) < 0 {
 		return new(big.Int)
 	}
 	return payout
 }
 
+// assertSealed checks the on-chain instruction message really is sealed: the
+// plaintext model must not survive anywhere inside the ciphertext.
+func assertSealed(plaintext, ciphertext []byte) {
+	if bytes.Contains(ciphertext, plaintext) {
+		fccutils.FatalWithCause(errors.New("FAIL: registerModel message carries the plaintext model"))
+	}
+	assertNoSecrets("registerModel instruction message", ciphertext)
+}
+
 // assertNoSecrets fails the run if a model parameter shows up somewhere public.
-func assertNoSecrets(label, blob string) {
-	for _, secret := range secretStrings() {
-		if strings.Contains(blob, secret) {
-			fccutils.FatalWithCause(errors.Errorf("FAIL: %s leaks a model parameter", label))
+//
+// The blobs are searched as raw bytes rather than as hex: hex-encoding random
+// ciphertext turns every byte into two characters drawn from the same alphabet
+// as a decimal parameter, so short parameters would match by chance and the test
+// would fail at random. Structural leaks are covered separately — the decision
+// payload is decoded and every field checked against its expected value.
+func assertNoSecrets(label string, blobs ...[]byte) {
+	for _, blob := range blobs {
+		for _, secret := range secretStrings() {
+			if bytes.Contains(blob, []byte(secret)) {
+				fccutils.FatalWithCause(errors.Errorf("FAIL: %s leaks a model parameter", label))
+			}
 		}
 	}
 }
