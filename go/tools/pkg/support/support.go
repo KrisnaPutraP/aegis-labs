@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/flare-foundation/go-flare-common/pkg/contracts/fdc2/fdc2hub"
+	"github.com/flare-foundation/go-flare-common/pkg/contracts/fdchub"
 	"github.com/flare-foundation/go-flare-common/pkg/contracts/system"
 	"github.com/flare-foundation/go-flare-common/pkg/contracts/tee/extensiongovernance"
 	"github.com/flare-foundation/go-flare-common/pkg/contracts/tee/extensionmanager"
@@ -41,6 +42,10 @@ type Support struct {
 
 	FlareSystemManager *system.FlareSystemsManager
 	Fdc2Hub            *fdc2hub.Fdc2Hub
+
+	// FdcHub is the FDC (v1) hub that serves the Web2Json attestation type Aegis
+	// uses for weather data. Nil when the addresses file predates FDC v1.
+	FdcHub *fdchub.FdcHub
 
 	// Diamond-pattern facet bindings. All are bound to the same FlareTeeManager
 	// (diamond proxy) address; the diamond routes each call to the correct facet.
@@ -66,6 +71,14 @@ type Addresses struct {
 	// (ExtensionManager, MachineManager, Verification, WalletManager,
 	// WalletKeyManager, WalletProjectManager, OwnerAllowlist) at a single address.
 	FlareTeeManager common.Address `json:"FlareTeeManager"`
+
+	// FdcHub and FdcVerification are the Flare Data Connector contracts Aegis uses
+	// for weather attestations: requests go to the hub, and InstructionSender checks
+	// the returned Merkle proof against FdcVerification. These are the FDC (v1)
+	// contracts the Web2Json attestation type is served by — not the Fdc2 ones the
+	// TEE availability check uses.
+	FdcHub          common.Address `json:"FdcHub"`
+	FdcVerification common.Address `json:"FdcVerification"`
 }
 
 func DefaultSupport(AddressesFilePath, chainNodeURL string) (*Support, error) {
@@ -148,6 +161,16 @@ func NewSupport(prv *ecdsa.PrivateKey, chainClient *ethclient.Client, addresses 
 		return nil, err
 	}
 
+	// Bound only when the addresses file names an FdcHub; local devnet dumps do not
+	// carry one, and nothing but the weather flow needs it.
+	var fdcHub *fdchub.FdcHub
+	if addresses.FdcHub != (common.Address{}) {
+		fdcHub, err = fdchub.NewFdcHub(addresses.FdcHub, chainClient)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	tv, err := verification.NewVerification(diamond, chainClient)
 	if err != nil {
 		return nil, err
@@ -181,6 +204,7 @@ func NewSupport(prv *ecdsa.PrivateKey, chainClient *ethclient.Client, addresses 
 		TeeWalletProjectManager: twpm,
 		FlareSystemManager:      sm,
 		Fdc2Hub:                 ftdc,
+		FdcHub:                  fdcHub,
 		TeeVerification:         tv,
 		TeeExtensionRegistry:    ter,
 		ChainClient:             chainClient,

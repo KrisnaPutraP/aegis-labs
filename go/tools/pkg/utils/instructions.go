@@ -39,8 +39,11 @@ func DeployInstructionSender(s *support.Support) (common.Address, *sign.Instruct
 
 	// Both registry args are the FlareTeeManager diamond proxy: the diamond
 	// routes ExtensionManager and MachineManager calls to the right facets.
+	// The third is Flare's FdcVerification, which the contract calls to check
+	// every weather attestation before it forwards an EVALUATE.
 	address, tx, contract, err := sign.DeployInstructionSender(
-		opts, s.ChainClient, s.Addresses.FlareTeeManager, s.Addresses.FlareTeeManager,
+		opts, s.ChainClient,
+		s.Addresses.FlareTeeManager, s.Addresses.FlareTeeManager, s.Addresses.FdcVerification,
 	)
 	if err != nil {
 		return common.Address{}, nil, errors.Errorf("failed to deploy contract: %s", err)
@@ -133,21 +136,81 @@ func SendRegisterModel(s *support.Support, instructionSenderAddress common.Addre
 	)
 }
 
+// SendRegisterPolicyTrigger binds a policy to the one attestation request that may
+// settle it. Owner-only on-chain, so the caller must hold the deployer key.
+func SendRegisterPolicyTrigger(
+	s *support.Support,
+	instructionSenderAddress common.Address,
+	policyID common.Hash,
+	requestBodyHash common.Hash,
+) (common.Hash, error) {
+	sender, err := sign.NewInstructionSender(instructionSenderAddress, s.ChainClient)
+	if err != nil {
+		return common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
+	}
+
+	opts, err := bind.NewKeyedTransactorWithChainID(s.Prv, s.ChainID)
+	if err != nil {
+		return common.Hash{}, errors.Errorf("failed to create transactor: %s", err)
+	}
+
+	tx, err := sender.RegisterPolicyTrigger(opts, [32]byte(policyID), [32]byte(requestBodyHash))
+	if err != nil {
+		if reason := fccutils.DecodeRevertReason(err); reason != "" {
+			return common.Hash{}, errors.Errorf("failed to send registerPolicyTrigger: %s (revert reason: %s)", err, reason)
+		}
+		return common.Hash{}, errors.Errorf("failed to send registerPolicyTrigger: %s", err)
+	}
+
+	receipt, err := support.CheckTx(tx, s.ChainClient)
+	if err != nil {
+		return common.Hash{}, errors.Errorf("registerPolicyTrigger: %s", err)
+	}
+
+	return receipt.TxHash, nil
+}
+
+// TriggerRequestHash asks the contract for the hash of an attestation request body,
+// in exactly the form evaluate() compares against. Reading it from the contract
+// keeps the insurer's registration and the on-chain check from drifting apart.
+func TriggerRequestHash(
+	s *support.Support,
+	instructionSenderAddress common.Address,
+	requestBody sign.IWeb2JsonRequestBody,
+) (common.Hash, error) {
+	sender, err := sign.NewInstructionSender(instructionSenderAddress, s.ChainClient)
+	if err != nil {
+		return common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
+	}
+
+	hash, err := sender.TriggerRequestHash(&bind.CallOpts{}, requestBody)
+	if err != nil {
+		return common.Hash{}, errors.Errorf("failed to call triggerRequestHash: %s", err)
+	}
+
+	return common.Hash(hash), nil
+}
+
 // SendEvaluate sends an evaluate instruction via the InstructionSender.
+//
+// The rainfall figure is not a parameter: it travels inside the FDC attestation
+// and is extracted on-chain after the Merkle proof checks out. There is no path
+// that lets this helper — or anyone else — hand the enclave a rainfall number of
+// their own choosing.
 // Returns (instructionId, txHash).
 func SendEvaluate(
 	s *support.Support,
 	instructionSenderAddress common.Address,
 	policyID common.Hash,
-	rainfallTenthsMm *big.Int,
 	payoutTo common.Address,
+	proof sign.IWeb2JsonProof,
 ) (common.Hash, common.Hash, error) {
 	return sendInstruction(
 		s, instructionSenderAddress, "evaluate",
 		func(sender *sign.InstructionSender, opts *bind.TransactOpts) (*types.Transaction, error) {
-			return sender.Evaluate(opts, [32]byte(policyID), rainfallTenthsMm, payoutTo)
+			return sender.Evaluate(opts, [32]byte(policyID), payoutTo, proof)
 		},
-		[32]byte(policyID), rainfallTenthsMm, payoutTo,
+		[32]byte(policyID), payoutTo, proof,
 	)
 }
 

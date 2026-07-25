@@ -66,8 +66,11 @@ type RegisterModelRequest struct {
 // on-chain as (bytes32, uint256, address) by InstructionSender.evaluate.
 //
 // Every field is public. RainfallTenthsMm is cumulative rainfall over the policy
-// window; in Fase 3 it stops being a caller-supplied number and becomes the
-// value carried by an FDC JsonApi attestation (trust boundary invariant 3).
+// window, and it is not a number any caller chooses: InstructionSender extracts
+// it from an FDC Web2Json attestation whose Merkle proof it has verified against
+// the voting round's on-chain root, and only that contract may send instructions
+// to this extension. That chain of custody is what satisfies trust boundary
+// invariant 3 — evaluation runs on FDC-attested data or it does not run at all.
 type EvaluateRequest struct {
 	PolicyID         common.Hash
 	RainfallTenthsMm *big.Int

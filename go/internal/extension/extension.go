@@ -146,6 +146,11 @@ func (e *Extension) processRegisterModel(action teetypes.Action, df *instruction
 // processEvaluate scores attested trigger data against the policy's confidential
 // model and returns the payout decision.
 //
+// The rainfall in the message is FDC-attested by construction: InstructionSender
+// is the only address allowed to send instructions to this extension, and it
+// only forwards a reading it has extracted from a Web2Json attestation whose
+// Merkle proof it verified on-chain.
+//
 // The result is ABI-encoded (policyId, payoutAmount, payoutTo) and signed by the
 // tee-node with the TEE identity key, which is what makes the decision
 // verifiable on-chain while the model behind it stays hidden.
