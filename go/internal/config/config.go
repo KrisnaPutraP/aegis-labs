@@ -11,9 +11,18 @@ const (
 	Version = "0.1.0"
 
 	// OPType and OPCommand strings — must match the bytes32 constants in contracts/InstructionSender.sol.
-	OPTypeKey       = "KEY"
-	OPCommandUpdate = "UPDATE"
-	OPCommandSign   = "SIGN"
+	//
+	// Aegis uses a single OPType (POLICY) with two commands:
+	//   REGISTER_MODEL — the insurer loads the confidential risk model for one policy.
+	//   EVALUATE       — the TEE scores attested trigger data against that model.
+	//
+	// Payout execution is deliberately NOT its own OPCommand: ARCHITECTURE.md §5
+	// leaves that to the agent, and folding it into the EVALUATE result keeps the
+	// swappable PayoutExecutor (PMW vs FXRP, decided in Fase 4) behind a single
+	// signed decision instead of a second round trip through the TEE.
+	OPTypePolicy           = "POLICY"
+	OPCommandRegisterModel = "REGISTER_MODEL"
+	OPCommandEvaluate      = "EVALUATE"
 
 	TimeoutShutdown = 5 * time.Second
 )

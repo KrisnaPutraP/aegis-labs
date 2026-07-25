@@ -1,11 +1,17 @@
-// Package main runs the sign-extension end-to-end test:
+// Package main runs the Aegis extension end-to-end test:
 //   1. setExtensionId on the deployed InstructionSender (idempotent)
 //   2. fetch TEE public key from the extension proxy
-//   3. ECIES-encrypt a fixed test private key under the TEE pubkey
-//   4. send updateKey on-chain, poll for result
-//   5. send sign(testMessage) on-chain, poll for result
-//   6. ABI-decode (bytes message, bytes signature) from result.Data,
-//      ecrecover the signer, verify it matches the test key's address
+//   3. ECIES-encrypt the insurer's confidential model under the TEE pubkey
+//   4. send registerModel on-chain, poll for result
+//   5. send evaluate(policyId, rainfall, payoutTo) on-chain for a dry reading
+//      and for a wet reading, poll for both results
+//   6. ABI-decode (bytes32 policyId, uint256 payoutAmount, address payoutTo)
+//      from each result and check the decision against what the model implies
+//
+// The model parameters live in this file only because the test plays the role of
+// the insurer: it is the one party that legitimately knows them. They travel to
+// the TEE encrypted and must never appear in an instruction message, an action
+// result, or a log line — step 6 asserts exactly that.
 package main
 
 import (
@@ -18,18 +24,50 @@ import (
 	"strings"
 	"time"
 
+	"sign-extension/pkg/types"
 	"sign-extension/tools/pkg/configs"
 	"sign-extension/tools/pkg/fccutils"
 	"sign-extension/tools/pkg/support"
 	instrutils "sign-extension/tools/pkg/utils"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
 	"github.com/flare-foundation/go-flare-common/pkg/logger"
-	"github.com/flare-foundation/tee-node/pkg/types"
+	teetypes "github.com/flare-foundation/tee-node/pkg/types"
 	"github.com/pkg/errors"
 )
+
+// testPolicyID is the policy the test registers a model for.
+var testPolicyID = common.HexToHash("0x000000000000000000000000000000000000000000000000000000000000a3d1")
+
+// testPayoutTo is the policyholder address the decision must echo back.
+var testPayoutTo = common.HexToAddress("0x000000000000000000000000000000000000dEaD")
+
+// testModel is the insurer's confidential model for testPolicyID: cover starts
+// below 120.0 mm of cumulative rainfall and reaches the full sum insured at or
+// below 40.0 mm, scaled by a hidden 0.9 factor.
+func testModel() types.ModelParameters {
+	return types.ModelParameters{
+		TriggerTenthsMm: 1200,
+		ExitTenthsMm:    400,
+		SumInsuredWei:   big.NewInt(1_000_000_000_000_000_000), // 1 CFLR-equivalent
+		PayoutFactorBps: 9000,
+		MinPayoutWei:    big.NewInt(1_000_000_000_000),
+	}
+}
+
+// secretStrings are the decimal renderings of the model parameters. None of them
+// may appear in anything the chain or the proxy can see (FR-8, rule 7).
+func secretStrings() []string {
+	m := testModel()
+	return []string{
+		fmt.Sprint(m.TriggerTenthsMm),
+		fmt.Sprint(m.ExitTenthsMm),
+		m.SumInsuredWei.String(),
+		fmt.Sprint(m.PayoutFactorBps),
+		m.MinPayoutWei.String(),
+	}
+}
 
 func main() {
 	af := flag.String("a", configs.AddressesFile, "file with deployed addresses")
@@ -62,14 +100,14 @@ func main() {
 		logger.Infof("  Extension ID set.")
 	}
 
-	// --- Step 2: Fetch TEE public key and ECIES-encrypt a test private key ---
+	// --- Step 2: Fetch TEE public key and ECIES-encrypt the confidential model ---
 	logger.Infof("Step 2: Fetching TEE public key from extension proxy...")
 	teeInfo, err := fccutils.TeeInfo(*pf)
 	if err != nil {
 		fccutils.FatalWithCause(errors.Errorf("fetch TEE info: %s", err))
 	}
 
-	ecdsaPub, err := types.ParsePubKey(teeInfo.MachineData.PublicKey)
+	ecdsaPub, err := teetypes.ParsePubKey(teeInfo.MachineData.PublicKey)
 	if err != nil {
 		fccutils.FatalWithCause(errors.Errorf("parse TEE public key: %s", err))
 	}
@@ -81,130 +119,155 @@ func main() {
 		Params: ecies.ECIES_AES128_SHA256,
 	}
 
-	// Fixed test private key for deterministic verification.
-	testPrivKeyHex := "fad9c8855b740a0b7ed4c221dbad0f33a83a49cad6b3fe8d5817ac83d38b6a19"
-	testPrivKeyBytes, _ := hex.DecodeString(testPrivKeyHex)
-	testPrivKey, err := crypto.ToECDSA(testPrivKeyBytes)
+	registerRequest := types.RegisterModelRequest{PolicyID: testPolicyID, Model: testModel()}
+	plaintext, err := registerRequest.Encode()
 	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("parse test private key: %s", err))
+		fccutils.FatalWithCause(errors.Errorf("encode register model request: %s", err))
 	}
-	testAddress := crypto.PubkeyToAddress(testPrivKey.PublicKey)
-	logger.Infof("  Test private key address: %s", testAddress.Hex())
 
-	ciphertext, err := ecies.Encrypt(rand.Reader, eciesPub, testPrivKeyBytes, nil, nil)
+	ciphertext, err := ecies.Encrypt(rand.Reader, eciesPub, plaintext, nil, nil)
 	if err != nil {
 		fccutils.FatalWithCause(errors.Errorf("ECIES encrypt: %s", err))
 	}
-	logger.Infof("  Encrypted key: %d bytes", len(ciphertext))
+	logger.Infof("  Policy ID: %s", testPolicyID.Hex())
+	logger.Infof("  Encrypted model: %d bytes (plaintext never leaves this process)", len(ciphertext))
 
-	// --- Step 3: updateKey ---
-	logger.Infof("Step 3: Sending updateKey instruction on-chain...")
-	updateKeyID, _, err := instrutils.SendUpdateKey(testSupport, instructionSenderAddress, ciphertext)
+	assertNoSecrets("registerModel instruction message", hex.EncodeToString(ciphertext))
+
+	// --- Step 3: registerModel ---
+	logger.Infof("Step 3: Sending registerModel instruction on-chain...")
+	registerID, _, err := instrutils.SendRegisterModel(testSupport, instructionSenderAddress, ciphertext)
 	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("updateKey: %s", err))
+		fccutils.FatalWithCause(errors.Errorf("registerModel: %s", err))
 	}
-	logger.Infof("  updateKey instruction ID: %s", updateKeyID.Hex())
+	logger.Infof("  registerModel instruction ID: %s", registerID.Hex())
 
 	time.Sleep(5 * time.Second)
 
-	// --- Step 4: poll for updateKey result ---
-	logger.Infof("Step 4: Waiting for updateKey result...")
-	updateResp, err := fccutils.ActionResult(*pf, updateKeyID)
+	// --- Step 4: poll for registerModel result ---
+	logger.Infof("Step 4: Waiting for registerModel result...")
+	registerResp, err := fccutils.ActionResult(*pf, registerID)
 	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("poll updateKey: %s", err))
+		fccutils.FatalWithCause(errors.Errorf("poll registerModel: %s", err))
 	}
-	if updateResp.Result.Status == 0 {
-		fccutils.FatalWithCause(errors.Errorf("updateKey instruction failed: %s", updateResp.Result.Log))
+	if registerResp.Result.Status == 0 {
+		fccutils.FatalWithCause(errors.Errorf("registerModel instruction failed: %s", registerResp.Result.Log))
 	}
-	logger.Infof("  updateKey succeeded (status=%d)", updateResp.Result.Status)
+	logger.Infof("  registerModel succeeded (status=%d)", registerResp.Result.Status)
+	assertNoSecrets("registerModel action result", fmt.Sprintf("%s %x", registerResp.Result.Log, registerResp.Result.Data))
 
-	// --- Step 5: sign ---
-	logger.Infof("Step 5: Sending sign instruction on-chain...")
-	testMessage := []byte("Hello from the sign extension e2e test!")
-	signID, _, err := instrutils.SendSign(testSupport, instructionSenderAddress, testMessage)
-	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("sign: %s", err))
-	}
-	logger.Infof("  sign instruction ID: %s", signID.Hex())
+	// --- Step 5 & 6: evaluate a dry reading and a wet reading ---
+	dryPayout := runEvaluate(testSupport, instructionSenderAddress, *pf, "dry season (drought)", big.NewInt(600))
+	wetPayout := runEvaluate(testSupport, instructionSenderAddress, *pf, "normal season", big.NewInt(1500))
 
-	time.Sleep(5 * time.Second)
+	logger.Infof("Decisions: dry=%s wei, wet=%s wei", dryPayout, wetPayout)
 
-	// --- Step 6: poll for sign result and verify ---
-	logger.Infof("Step 6: Waiting for sign result...")
-	signResp, err := fccutils.ActionResult(*pf, signID)
-	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("poll sign: %s", err))
-	}
-	if signResp.Result.Status == 0 {
-		fccutils.FatalWithCause(errors.Errorf("sign instruction failed: %s", signResp.Result.Log))
+	if wetPayout.Sign() != 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL: rainfall above the trigger must not pay out, got %s wei", wetPayout))
 	}
 
-	// The result data is ABI-encoded (bytes, bytes) = (originalMessage, signature).
-	_, sigBytes, err := abiDecodeTwo(signResp.Result.Data)
-	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("ABI decode (bytes,bytes): %s", err))
-	}
-	logger.Infof("  Signature: %s", hex.EncodeToString(sigBytes))
-
-	// Recover signer. signECDSA in the TEE returns [r,s,v] where v is 27 or 28;
-	// SigToPub expects v in [0,3], so normalize.
-	msgHash := crypto.Keccak256(testMessage)
-	recoveredPub, err := crypto.SigToPub(msgHash, normalizeV(sigBytes))
-	if err != nil {
-		fccutils.FatalWithCause(errors.Errorf("ecrecover: %s", err))
-	}
-	recoveredAddr := crypto.PubkeyToAddress(*recoveredPub)
-	logger.Infof("  Recovered signer: %s", recoveredAddr.Hex())
-	logger.Infof("  Expected signer:  %s", testAddress.Hex())
-
-	if recoveredAddr != testAddress {
-		fccutils.FatalWithCause(errors.Errorf("FAIL: recovered signer %s does not match expected %s", recoveredAddr.Hex(), testAddress.Hex()))
+	// The expected dry-season payout is recomputed here from the same parameters
+	// the insurer registered — the point is that only the insurer and the enclave
+	// can do this arithmetic.
+	expectedDry := expectedPayout(testModel(), big.NewInt(600))
+	if dryPayout.Cmp(expectedDry) != 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL: dry-season payout %s wei does not match the model's %s wei", dryPayout, expectedDry))
 	}
 
 	logger.Infof("All tests passed.")
 }
 
-// normalizeV converts a 65-byte [r,s,v] signature where v is 27 or 28 into the
-// form expected by go-ethereum's SigToPub (v in [0,3]).
-func normalizeV(sig []byte) []byte {
-	if len(sig) != 65 {
-		return sig
+// runEvaluate sends one evaluate instruction, waits for the signed decision, and
+// returns the payout amount it carries.
+func runEvaluate(
+	s *support.Support,
+	instructionSenderAddress common.Address,
+	proxyURL string,
+	label string,
+	rainfallTenthsMm *big.Int,
+) *big.Int {
+	logger.Infof("Step 5 (%s): Sending evaluate instruction, rainfall=%s tenths of mm...", label, rainfallTenthsMm)
+
+	evaluateID, _, err := instrutils.SendEvaluate(s, instructionSenderAddress, testPolicyID, rainfallTenthsMm, testPayoutTo)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("evaluate (%s): %s", label, err))
 	}
-	out := make([]byte, 65)
-	copy(out, sig)
-	if out[64] >= 27 {
-		out[64] -= 27
+	logger.Infof("  evaluate instruction ID: %s", evaluateID.Hex())
+
+	time.Sleep(5 * time.Second)
+
+	logger.Infof("Step 6 (%s): Waiting for evaluate result...", label)
+	resp, err := fccutils.ActionResult(proxyURL, evaluateID)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("poll evaluate (%s): %s", label, err))
 	}
-	return out
+	if resp.Result.Status == 0 {
+		fccutils.FatalWithCause(errors.Errorf("evaluate instruction failed (%s): %s", label, resp.Result.Log))
+	}
+
+	decision, err := types.DecodeEvaluateResponse(resp.Result.Data)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("decode evaluate response (%s): %s", label, err))
+	}
+
+	if decision.PolicyID != testPolicyID {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): decision is for policy %s, expected %s", label, decision.PolicyID.Hex(), testPolicyID.Hex()))
+	}
+	if decision.PayoutTo != testPayoutTo {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): payout address %s, expected %s", label, decision.PayoutTo.Hex(), testPayoutTo.Hex()))
+	}
+
+	logger.Infof("  Decision: policy=%s payout=%s wei to %s",
+		decision.PolicyID.Hex(), decision.PayoutAmount, decision.PayoutTo.Hex())
+
+	// The TEE identity signs every action result; without that signature the
+	// decision would be worth no more than an off-chain promise.
+	if len(resp.Signature) == 0 {
+		fccutils.FatalWithCause(errors.Errorf("FAIL (%s): action result carries no TEE signature", label))
+	}
+	logger.Infof("  TEE signature: %s", hex.EncodeToString(resp.Signature))
+
+	assertNoSecrets(fmt.Sprintf("evaluate action result (%s)", label),
+		fmt.Sprintf("%s %x", resp.Result.Log, resp.Result.Data))
+
+	return decision.PayoutAmount
 }
 
-// abiDecodeTwo decodes ABI-encoded (bytes, bytes).
-func abiDecodeTwo(data []byte) ([]byte, []byte, error) {
-	if len(data) < 64 {
-		return nil, nil, fmt.Errorf("data too short for (bytes,bytes): %d bytes", len(data))
-	}
-	offset1 := new(big.Int).SetBytes(data[0:32]).Uint64()
-	offset2 := new(big.Int).SetBytes(data[32:64]).Uint64()
+// expectedPayout mirrors the enclave's scoring function so the test can check
+// the decision without asking the enclave to explain itself.
+func expectedPayout(m types.ModelParameters, rainfallTenthsMm *big.Int) *big.Int {
+	trigger := new(big.Int).SetUint64(m.TriggerTenthsMm)
+	exit := new(big.Int).SetUint64(m.ExitTenthsMm)
 
-	readBytes := func(offset uint64) ([]byte, error) {
-		if int(offset)+32 > len(data) {
-			return nil, fmt.Errorf("offset %d out of range", offset)
-		}
-		length := new(big.Int).SetBytes(data[offset : offset+32]).Uint64()
-		start := offset + 32
-		if int(start+length) > len(data) {
-			return nil, fmt.Errorf("length %d exceeds data at offset %d", length, offset)
-		}
-		return data[start : start+length], nil
+	if rainfallTenthsMm.Cmp(trigger) >= 0 {
+		return new(big.Int)
 	}
 
-	a, err := readBytes(offset1)
-	if err != nil {
-		return nil, nil, err
+	shortfall := new(big.Int).Sub(trigger, rainfallTenthsMm)
+	span := new(big.Int).Sub(trigger, exit)
+	if shortfall.Cmp(span) > 0 {
+		shortfall = span
 	}
-	b, err := readBytes(offset2)
-	if err != nil {
-		return nil, nil, err
+
+	payout := new(big.Int).Mul(m.SumInsuredWei, shortfall)
+	payout.Mul(payout, new(big.Int).SetUint64(m.PayoutFactorBps))
+	payout.Div(payout, new(big.Int).Mul(span, big.NewInt(10_000)))
+
+	if payout.Cmp(m.MinPayoutWei) < 0 {
+		return new(big.Int)
 	}
-	return a, b, nil
+	return payout
+}
+
+// assertNoSecrets fails the run if a model parameter shows up somewhere public.
+func assertNoSecrets(label, blob string) {
+	for _, secret := range secretStrings() {
+		if strings.Contains(blob, secret) {
+			fccutils.FatalWithCause(errors.Errorf("FAIL: %s leaks a model parameter", label))
+		}
+	}
 }

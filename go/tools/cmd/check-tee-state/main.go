@@ -192,7 +192,7 @@ func verdict(proxy, is, onchain *big.Int, onchainErr error, status uint8, status
 	mismatch := false
 	if is.Cmp(onchain) != 0 {
 		fmt.Printf("  MISMATCH: InstructionSender ext=%s ≠ TEE on-chain ext=%s\n", is.String(), onchain.String())
-		fmt.Println("    → updateKey calls getRandomTeeIds(InstructionSender's ext) which has no TEEs → TooMany.")
+		fmt.Println("    → registerModel/evaluate call getRandomTeeIds(InstructionSender's ext) which has no TEEs → TooMany.")
 		if registered, err := s.TeeExtensionRegistry.GetTeeExtensionInstructionsSender(callOpts, onchain); err == nil && registered != (common.Address{}) {
 			fmt.Printf("    → Quick fix: set INSTRUCTION_SENDER=%s in config/extension.env (this is the sender registered against the TEE's ext %s).\n", registered.Hex(), onchain.String())
 			if registered == currentSender {

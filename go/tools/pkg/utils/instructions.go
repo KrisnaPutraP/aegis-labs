@@ -118,62 +118,52 @@ func SetExtensionId(s *support.Support, instructionSenderAddress common.Address)
 	return nil
 }
 
-// SendUpdateKey sends an updateKey instruction via the InstructionSender.
+// SendRegisterModel sends a registerModel instruction via the InstructionSender.
+//
+// encryptedModel must already be ECIES ciphertext sealed to the enclave public
+// key — this helper never sees, and must never be handed, plaintext parameters.
 // Returns (instructionId, txHash).
-func SendUpdateKey(s *support.Support, instructionSenderAddress common.Address, encryptedKey []byte) (common.Hash, common.Hash, error) {
-	sender, err := sign.NewInstructionSender(instructionSenderAddress, s.ChainClient)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
-	}
-
-	opts, err := bind.NewKeyedTransactorWithChainID(s.Prv, s.ChainID)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to create transactor: %s", err)
-	}
-	opts.Value = DefaultFee
-
-	tx, err := sender.UpdateKey(opts, encryptedKey)
-	if err != nil {
-		reason := fccutils.DecodeRevertReason(err)
-		if reason == "" {
-			parsed, _ := sign.InstructionSenderMetaData.GetAbi()
-			if parsed != nil {
-				callData, packErr := parsed.Pack("updateKey", encryptedKey)
-				if packErr == nil {
-					from := crypto.PubkeyToAddress(s.Prv.PublicKey)
-					reason = fccutils.SimulateAndDecodeRevert(
-						s.ChainClient, from, instructionSenderAddress, DefaultFee, callData,
-					)
-				}
-			}
-		}
-		if reason != "" {
-			return common.Hash{}, common.Hash{}, errors.Errorf("failed to send updateKey: %s (revert reason: %s)", err, reason)
-		}
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to send updateKey: %s", err)
-	}
-
-	receipt, err := bind.WaitMined(context.Background(), s.ChainClient, tx)
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed waiting for transaction: %s", err)
-	}
-	if receipt.Status != 1 {
-		return common.Hash{}, common.Hash{}, errors.Errorf("updateKey transaction failed with status: %d", receipt.Status)
-	}
-	if len(receipt.Logs) == 0 {
-		return common.Hash{}, common.Hash{}, errors.New("no logs found in receipt")
-	}
-
-	instructionSent, err := s.TeeVerification.ParseTeeInstructionsSent(*receipt.Logs[0])
-	if err != nil {
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to parse TeeInstructionsSent event: %s", err)
-	}
-	return instructionSent.InstructionId, receipt.TxHash, nil
+func SendRegisterModel(s *support.Support, instructionSenderAddress common.Address, encryptedModel []byte) (common.Hash, common.Hash, error) {
+	return sendInstruction(
+		s, instructionSenderAddress, "registerModel",
+		func(sender *sign.InstructionSender, opts *bind.TransactOpts) (*types.Transaction, error) {
+			return sender.RegisterModel(opts, encryptedModel)
+		},
+		encryptedModel,
+	)
 }
 
-// SendSign sends a sign instruction via the InstructionSender.
+// SendEvaluate sends an evaluate instruction via the InstructionSender.
 // Returns (instructionId, txHash).
-func SendSign(s *support.Support, instructionSenderAddress common.Address, message []byte) (common.Hash, common.Hash, error) {
+func SendEvaluate(
+	s *support.Support,
+	instructionSenderAddress common.Address,
+	policyID common.Hash,
+	rainfallTenthsMm *big.Int,
+	payoutTo common.Address,
+) (common.Hash, common.Hash, error) {
+	return sendInstruction(
+		s, instructionSenderAddress, "evaluate",
+		func(sender *sign.InstructionSender, opts *bind.TransactOpts) (*types.Transaction, error) {
+			return sender.Evaluate(opts, [32]byte(policyID), rainfallTenthsMm, payoutTo)
+		},
+		[32]byte(policyID), rainfallTenthsMm, payoutTo,
+	)
+}
+
+// sendInstruction runs the shared send-and-confirm path: bind, pay the fee,
+// submit, decode a revert reason if the call fails, wait for the receipt, and
+// pull the instruction id out of the TeeInstructionsSent event.
+//
+// method and callArgs are only used to re-simulate a failed call for a readable
+// revert reason.
+func sendInstruction(
+	s *support.Support,
+	instructionSenderAddress common.Address,
+	method string,
+	send func(*sign.InstructionSender, *bind.TransactOpts) (*types.Transaction, error),
+	callArgs ...any,
+) (common.Hash, common.Hash, error) {
 	sender, err := sign.NewInstructionSender(instructionSenderAddress, s.ChainClient)
 	if err != nil {
 		return common.Hash{}, common.Hash{}, errors.Errorf("failed to bind contract: %s", err)
@@ -185,13 +175,13 @@ func SendSign(s *support.Support, instructionSenderAddress common.Address, messa
 	}
 	opts.Value = DefaultFee
 
-	tx, err := sender.Sign(opts, message)
+	tx, err := send(sender, opts)
 	if err != nil {
 		reason := fccutils.DecodeRevertReason(err)
 		if reason == "" {
 			parsed, _ := sign.InstructionSenderMetaData.GetAbi()
 			if parsed != nil {
-				callData, packErr := parsed.Pack("sign", message)
+				callData, packErr := parsed.Pack(method, callArgs...)
 				if packErr == nil {
 					from := crypto.PubkeyToAddress(s.Prv.PublicKey)
 					reason = fccutils.SimulateAndDecodeRevert(
@@ -201,9 +191,9 @@ func SendSign(s *support.Support, instructionSenderAddress common.Address, messa
 			}
 		}
 		if reason != "" {
-			return common.Hash{}, common.Hash{}, errors.Errorf("failed to send sign: %s (revert reason: %s)", err, reason)
+			return common.Hash{}, common.Hash{}, errors.Errorf("failed to send %s: %s (revert reason: %s)", method, err, reason)
 		}
-		return common.Hash{}, common.Hash{}, errors.Errorf("failed to send sign: %s", err)
+		return common.Hash{}, common.Hash{}, errors.Errorf("failed to send %s: %s", method, err)
 	}
 
 	receipt, err := bind.WaitMined(context.Background(), s.ChainClient, tx)
@@ -211,7 +201,7 @@ func SendSign(s *support.Support, instructionSenderAddress common.Address, messa
 		return common.Hash{}, common.Hash{}, errors.Errorf("failed waiting for transaction: %s", err)
 	}
 	if receipt.Status != 1 {
-		return common.Hash{}, common.Hash{}, errors.Errorf("sign transaction failed with status: %d", receipt.Status)
+		return common.Hash{}, common.Hash{}, errors.Errorf("%s transaction failed with status: %d", method, receipt.Status)
 	}
 	if len(receipt.Logs) == 0 {
 		return common.Hash{}, common.Hash{}, errors.New("no logs found in receipt")

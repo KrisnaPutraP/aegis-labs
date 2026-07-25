@@ -5,23 +5,23 @@ pragma solidity ^0.8.27;
 import { ITeeExtensionRegistry } from "./interfaces/ITeeExtensionRegistry.sol";
 import { ITeeMachineRegistry } from "./interfaces/ITeeMachineRegistry.sol";
 
-/// @title InstructionSender (sign extension)
+/// @title InstructionSender (Aegis policy extension)
 /// @author Acex
-/// @notice On-chain entry point for sending instructions to the sign-extension TEE.
+/// @notice On-chain entry point for sending policy instructions to the Aegis TEE.
 ///
 /// DO NOT MODIFY: constructor, setExtensionId(), _getExtensionId()
 contract InstructionSender {
-    /// @notice Operation type for key-related actions (UPDATE, SIGN).
+    /// @notice Operation type for policy actions (REGISTER_MODEL, EVALUATE).
     // forge-lint: disable-next-line(unsafe-typecast)
-    bytes32 public constant OP_TYPE_KEY = bytes32("KEY");
+    bytes32 public constant OP_TYPE_POLICY = bytes32("POLICY");
 
-    /// @notice Command for the UPDATE_KEY action (stores an encrypted private key).
+    /// @notice Command for the REGISTER_MODEL action (loads an insurer's encrypted risk model).
     // forge-lint: disable-next-line(unsafe-typecast)
-    bytes32 public constant OP_COMMAND_UPDATE = bytes32("UPDATE");
+    bytes32 public constant OP_COMMAND_REGISTER_MODEL = bytes32("REGISTER_MODEL");
 
-    /// @notice Command for the SIGN action (signs a message with the stored key).
+    /// @notice Command for the EVALUATE action (scores trigger data against the hidden model).
     // forge-lint: disable-next-line(unsafe-typecast)
-    bytes32 public constant OP_COMMAND_SIGN = bytes32("SIGN");
+    bytes32 public constant OP_COMMAND_EVALUATE = bytes32("EVALUATE");
 
     /// @notice Reference to the TEE extension registry contract.
     ITeeExtensionRegistry public immutable TEE_EXTENSION_REGISTRY;
@@ -64,17 +64,19 @@ contract InstructionSender {
         revert("Extension ID not found.");
     }
 
-    /// @notice Update the stored private key by sending an encrypted key payload to the TEE.
-    /// @param _encryptedKey ECIES-encrypted (or otherwise sealed) private-key bytes that the
-    ///        TEE node will decrypt before storing the inner secp256k1 private key.
-    function updateKey(bytes calldata _encryptedKey) external payable {
+    /// @notice Load an insurer's confidential risk model for one policy into the TEE.
+    /// @dev The payload stays opaque on-chain by design: it is ECIES ciphertext sealed to the
+    ///      enclave public key, and only the enclave can open it. Never pass plaintext model
+    ///      parameters here — on-chain data is public forever (ARCHITECTURE.md §3).
+    /// @param _encryptedModel ECIES-encrypted JSON RegisterModelRequest (policy id + parameters).
+    function registerModel(bytes calldata _encryptedModel) external payable {
         address[] memory teeIds = TEE_MACHINE_REGISTRY.getRandomTeeIds(_getExtensionId(), 1);
         address[] memory cosigners = new address[](0);
 
         ITeeExtensionRegistry.TeeInstructionParams memory params = ITeeExtensionRegistry.TeeInstructionParams({
-            opType: OP_TYPE_KEY,
-            opCommand: OP_COMMAND_UPDATE,
-            message: _encryptedKey,
+            opType: OP_TYPE_POLICY,
+            opCommand: OP_COMMAND_REGISTER_MODEL,
+            message: _encryptedModel,
             cosigners: cosigners,
             cosignersThreshold: 0,
             claimBackAddress: msg.sender
@@ -86,16 +88,22 @@ contract InstructionSender {
         );
     }
 
-    /// @notice Request the TEE to sign a message with the stored private key.
-    /// @param _message Raw bytes to sign. The TEE returns the signature in the action result.
-    function sign(bytes calldata _message) external payable {
+    /// @notice Ask the TEE to score trigger data for a policy against its hidden model.
+    /// @dev Every argument is public: the weather reading is public data and the decision is
+    ///      meant to be verified on-chain. Fase 3 replaces the caller-supplied reading with a
+    ///      value carried by an FDC JsonApi attestation, so that evaluation can only ever run on
+    ///      attested data (trust boundary invariant 3).
+    /// @param _policyId Policy identifier, as registered with the TEE.
+    /// @param _rainfallTenthsMm Cumulative rainfall over the policy window, in tenths of a mm.
+    /// @param _payoutTo Address that receives the payout if the model triggers one.
+    function evaluate(bytes32 _policyId, uint256 _rainfallTenthsMm, address _payoutTo) external payable {
         address[] memory teeIds = TEE_MACHINE_REGISTRY.getRandomTeeIds(_getExtensionId(), 1);
         address[] memory cosigners = new address[](0);
 
         ITeeExtensionRegistry.TeeInstructionParams memory params = ITeeExtensionRegistry.TeeInstructionParams({
-            opType: OP_TYPE_KEY,
-            opCommand: OP_COMMAND_SIGN,
-            message: _message,
+            opType: OP_TYPE_POLICY,
+            opCommand: OP_COMMAND_EVALUATE,
+            message: abi.encode(_policyId, _rainfallTenthsMm, _payoutTo),
             cosigners: cosigners,
             cosignersThreshold: 0,
             claimBackAddress: msg.sender
