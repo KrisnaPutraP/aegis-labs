@@ -171,17 +171,17 @@ func DecodeRegisterModelRequest(plaintext []byte) (*RegisterModelRequest, error)
 // Validate checks the model is scoreable. It reports which parameter is wrong,
 // never what its value is.
 func (m *ModelParameters) Validate() error {
-	if m.SumInsuredWei == nil || m.SumInsuredWei.Sign() <= 0 {
-		return fmt.Errorf("model rejected: sumInsuredWei must be positive")
+	if m.SumInsuredUnits == nil || m.SumInsuredUnits.Sign() <= 0 {
+		return fmt.Errorf("model rejected: sumInsuredUnits must be positive")
 	}
-	if m.SumInsuredWei.BitLen() > 256 {
-		return fmt.Errorf("model rejected: sumInsuredWei exceeds uint256")
+	if m.SumInsuredUnits.BitLen() > 256 {
+		return fmt.Errorf("model rejected: sumInsuredUnits exceeds uint256")
 	}
-	if m.MinPayoutWei == nil {
-		return fmt.Errorf("model rejected: minPayoutWei is missing")
+	if m.MinPayoutUnits == nil {
+		return fmt.Errorf("model rejected: minPayoutUnits is missing")
 	}
-	if m.MinPayoutWei.Sign() < 0 {
-		return fmt.Errorf("model rejected: minPayoutWei must not be negative")
+	if m.MinPayoutUnits.Sign() < 0 {
+		return fmt.Errorf("model rejected: minPayoutUnits must not be negative")
 	}
 	if m.ExitTenthsMm >= m.TriggerTenthsMm {
 		return fmt.Errorf("model rejected: exitTenthsMm must be below triggerTenthsMm")

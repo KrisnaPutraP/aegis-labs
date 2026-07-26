@@ -116,13 +116,18 @@ func testPolicies() []*testPolicy {
 // cumulative rainfall and reaches the full sum insured at or below 40.0 mm,
 // scaled by a hidden 0.9 factor. Both policies use it, so any difference in
 // outcome comes from the attested rainfall alone.
+//
+// Amounts are in the payout asset's smallest unit, which for the FXRP executor
+// is 1e-6 FXRP. A sum insured of 5 FXRP keeps the whole demo inside what one
+// direct mint from the XRPL testnet faucet funds, while staying far enough above
+// the dust floor that the ramp is visible.
 func testModel() types.ModelParameters {
 	return types.ModelParameters{
 		TriggerTenthsMm: 1200,
 		ExitTenthsMm:    400,
-		SumInsuredWei:   big.NewInt(1_000_000_000_000_000_000), // 1 CFLR-equivalent
+		SumInsuredUnits: big.NewInt(5_000_000), // 5 FXRP
 		PayoutFactorBps: 9000,
-		MinPayoutWei:    big.NewInt(1_000_000_000_000),
+		MinPayoutUnits:  big.NewInt(100_000), // 0.1 FXRP
 	}
 }
 
@@ -133,9 +138,9 @@ func secretStrings() []string {
 	return []string{
 		fmt.Sprint(m.TriggerTenthsMm),
 		fmt.Sprint(m.ExitTenthsMm),
-		m.SumInsuredWei.String(),
+		m.SumInsuredUnits.String(),
 		fmt.Sprint(m.PayoutFactorBps),
-		m.MinPayoutWei.String(),
+		m.MinPayoutUnits.String(),
 	}
 }
 
@@ -448,14 +453,14 @@ func expectedPayout(m types.ModelParameters, rainfallTenthsMm *big.Int) *big.Int
 		shortfall = span
 	}
 
-	payout := new(big.Int).Mul(m.SumInsuredWei, shortfall)
+	payout := new(big.Int).Mul(m.SumInsuredUnits, shortfall)
 	payout.Mul(payout, new(big.Int).SetUint64(m.PayoutFactorBps))
 	payout.Div(payout, new(big.Int).Mul(span, big.NewInt(10_000)))
 
-	if payout.Cmp(m.SumInsuredWei) > 0 {
-		payout.Set(m.SumInsuredWei)
+	if payout.Cmp(m.SumInsuredUnits) > 0 {
+		payout.Set(m.SumInsuredUnits)
 	}
-	if payout.Cmp(m.MinPayoutWei) < 0 {
+	if payout.Cmp(m.MinPayoutUnits) < 0 {
 		return new(big.Int)
 	}
 	return payout

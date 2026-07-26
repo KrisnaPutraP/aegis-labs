@@ -30,9 +30,15 @@ type State struct {
 //
 // The MVP model is a drought cover with a hidden linear ramp: the further
 // cumulative rainfall falls below TriggerTenthsMm, the larger the payout, up to
-// the full sum insured at (or below) ExitTenthsMm. Rainfall is carried in tenths
-// of a millimetre and money in wei so that evaluation is pure integer maths —
-// floating point would make the enclave's decision non-reproducible.
+// the full sum insured at (or below) ExitTenthsMm.
+//
+// Rainfall is carried in tenths of a millimetre and money in the payout asset's
+// smallest indivisible unit, so that evaluation is pure integer maths — floating
+// point would make the enclave's decision non-reproducible. The enclave never
+// learns which asset that is: the amount it signs is handed to whichever
+// PayoutExecutor is wired up on-chain (FXRP today, PMW later), and only that
+// executor knows the denomination. For the FXRP executor a unit is 1e-6 FXRP,
+// the same scale as an XRP drop.
 type ModelParameters struct {
 	// TriggerTenthsMm is the dry-season rainfall level at which cover starts to
 	// pay. Rainfall at or above it pays nothing.
@@ -42,16 +48,16 @@ type ModelParameters struct {
 	// Must be strictly below TriggerTenthsMm.
 	ExitTenthsMm uint64 `json:"exitTenthsMm"`
 
-	// SumInsuredWei is the maximum payout for the policy.
-	SumInsuredWei *big.Int `json:"sumInsuredWei"`
+	// SumInsuredUnits is the maximum payout for the policy.
+	SumInsuredUnits *big.Int `json:"sumInsuredUnits"`
 
 	// PayoutFactorBps scales the ramp (10000 = 1.0). This is the insurer's
 	// loading/derating knob — the part competitors would most like to see.
 	PayoutFactorBps uint64 `json:"payoutFactorBps"`
 
-	// MinPayoutWei is a dust floor: a computed payout below it settles to zero
+	// MinPayoutUnits is a dust floor: a computed payout below it settles to zero
 	// so the pool is not drained by payouts worth less than their gas.
-	MinPayoutWei *big.Int `json:"minPayoutWei"`
+	MinPayoutUnits *big.Int `json:"minPayoutUnits"`
 }
 
 // RegisterModelRequest is the plaintext an insurer encrypts to the enclave

@@ -29,9 +29,9 @@ func secretModel() types.ModelParameters {
 	return types.ModelParameters{
 		TriggerTenthsMm: 1234,
 		ExitTenthsMm:    321,
-		SumInsuredWei:   big.NewInt(4242424242),
+		SumInsuredUnits: big.NewInt(4242424242),
 		PayoutFactorBps: 8765,
-		MinPayoutWei:    big.NewInt(31337),
+		MinPayoutUnits:  big.NewInt(31337),
 	}
 }
 

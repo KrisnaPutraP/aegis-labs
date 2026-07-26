@@ -12,9 +12,9 @@ func testModel() ModelParameters {
 	return ModelParameters{
 		TriggerTenthsMm: 1200,
 		ExitTenthsMm:    400,
-		SumInsuredWei:   big.NewInt(1_000_000_000_000_000_000),
+		SumInsuredUnits: big.NewInt(1_000_000_000_000_000_000),
 		PayoutFactorBps: 9000,
-		MinPayoutWei:    big.NewInt(1_000_000_000_000),
+		MinPayoutUnits:  big.NewInt(1_000_000_000_000),
 	}
 }
 
@@ -123,8 +123,8 @@ func TestRegisterModelRoundTrip(t *testing.T) {
 	if decoded.Model.TriggerTenthsMm != req.Model.TriggerTenthsMm ||
 		decoded.Model.ExitTenthsMm != req.Model.ExitTenthsMm ||
 		decoded.Model.PayoutFactorBps != req.Model.PayoutFactorBps ||
-		decoded.Model.SumInsuredWei.Cmp(req.Model.SumInsuredWei) != 0 ||
-		decoded.Model.MinPayoutWei.Cmp(req.Model.MinPayoutWei) != 0 {
+		decoded.Model.SumInsuredUnits.Cmp(req.Model.SumInsuredUnits) != 0 ||
+		decoded.Model.MinPayoutUnits.Cmp(req.Model.MinPayoutUnits) != 0 {
 		t.Errorf("model round trip mismatch: got %+v", decoded.Model)
 	}
 }
@@ -140,20 +140,20 @@ func TestDecodeRegisterModelRejectsBadPayloads(t *testing.T) {
 	payload := func(id, model string) string {
 		return `{"policyId":"` + id + `","model":` + model + `}`
 	}
-	const validModel = `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredWei":1,"payoutFactorBps":10000,"minPayoutWei":0}`
+	const validModel = `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredUnits":1,"payoutFactorBps":10000,"minPayoutUnits":0}`
 
 	tests := []struct {
 		name    string
 		payload string
 	}{
 		{"not json", "definitely not json"},
-		{"unknown field", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredWei":1,"payoutFactorBps":10000,"minPayoutWei":0,"backdoor":true}`)},
+		{"unknown field", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredUnits":1,"payoutFactorBps":10000,"minPayoutUnits":0,"backdoor":true}`)},
 		{"trailing data", payload(policyID, validModel) + "{}"},
 		{"zero policy id", payload(zeroID, validModel)},
-		{"exit above trigger", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":20,"sumInsuredWei":1,"payoutFactorBps":10000,"minPayoutWei":0}`)},
-		{"zero sum insured", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredWei":0,"payoutFactorBps":10000,"minPayoutWei":0}`)},
-		{"zero factor", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredWei":1,"payoutFactorBps":0,"minPayoutWei":0}`)},
-		{"missing min payout", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredWei":1,"payoutFactorBps":10000}`)},
+		{"exit above trigger", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":20,"sumInsuredUnits":1,"payoutFactorBps":10000,"minPayoutUnits":0}`)},
+		{"zero sum insured", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredUnits":0,"payoutFactorBps":10000,"minPayoutUnits":0}`)},
+		{"zero factor", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredUnits":1,"payoutFactorBps":0,"minPayoutUnits":0}`)},
+		{"missing min payout", payload(policyID, `{"triggerTenthsMm":10,"exitTenthsMm":1,"sumInsuredUnits":1,"payoutFactorBps":10000}`)},
 	}
 
 	for _, tt := range tests {
@@ -175,9 +175,9 @@ func TestModelValidationErrorsDoNotLeakValues(t *testing.T) {
 	model := ModelParameters{
 		TriggerTenthsMm: 1234,
 		ExitTenthsMm:    5678, // invalid: above trigger
-		SumInsuredWei:   big.NewInt(4242),
+		SumInsuredUnits: big.NewInt(4242),
 		PayoutFactorBps: 9999,
-		MinPayoutWei:    big.NewInt(31337),
+		MinPayoutUnits:  big.NewInt(31337),
 	}
 
 	err := model.Validate()

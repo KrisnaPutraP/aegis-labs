@@ -237,17 +237,17 @@ func evaluatePayout(model *types.ModelParameters, rainfallTenthsMm *big.Int) (*b
 	}
 
 	// payout = sumInsured * shortfall * factorBps / (span * 10000), truncated.
-	payout := new(big.Int).Mul(model.SumInsuredWei, shortfall)
+	payout := new(big.Int).Mul(model.SumInsuredUnits, shortfall)
 	payout.Mul(payout, new(big.Int).SetUint64(model.PayoutFactorBps))
 	payout.Div(payout, new(big.Int).Mul(span, bps))
 
 	// A factor above 100% must not let a policy pay more than it insures.
-	if payout.Cmp(model.SumInsuredWei) > 0 {
-		payout.Set(model.SumInsuredWei)
+	if payout.Cmp(model.SumInsuredUnits) > 0 {
+		payout.Set(model.SumInsuredUnits)
 	}
 
 	// Dust floor: a payout worth less than its own settlement cost pays nothing.
-	if payout.Cmp(model.MinPayoutWei) < 0 {
+	if payout.Cmp(model.MinPayoutUnits) < 0 {
 		return new(big.Int), nil
 	}
 

@@ -10,18 +10,20 @@ import (
 )
 
 // rampModel: cover responds below 120.0 mm, pays in full at or below 40.0 mm,
-// scaled by a hidden 0.9, on a sum insured of 1e18 wei.
+// scaled by a hidden 0.9. The sum insured is deliberately a large round number
+// rather than a realistic one — the ramp is pure integer arithmetic and these
+// cases exercise its rounding, not any particular payout asset's scale.
 func rampModel() types.ModelParameters {
 	return types.ModelParameters{
 		TriggerTenthsMm: 1200,
 		ExitTenthsMm:    400,
-		SumInsuredWei:   big.NewInt(1_000_000_000_000_000_000),
+		SumInsuredUnits: big.NewInt(1_000_000_000_000_000_000),
 		PayoutFactorBps: 9000,
-		MinPayoutWei:    big.NewInt(1_000_000_000_000),
+		MinPayoutUnits:  big.NewInt(1_000_000_000_000),
 	}
 }
 
-func wei(s string) *big.Int {
+func units(s string) *big.Int {
 	n, ok := new(big.Int).SetString(s, 10)
 	if !ok {
 		panic("bad decimal literal: " + s)
@@ -39,11 +41,11 @@ func TestEvaluatePayoutRamp(t *testing.T) {
 	}{
 		{"far above trigger", 2000, big.NewInt(0)},
 		{"exactly at trigger", 1200, big.NewInt(0)},
-		{"just below trigger", 1199, wei("1125000000000000")},
-		{"midway down the ramp", 800, wei("450000000000000000")},
-		{"drought reading", 600, wei("675000000000000000")},
-		{"exactly at exit", 400, wei("900000000000000000")},
-		{"below exit stays capped", 0, wei("900000000000000000")},
+		{"just below trigger", 1199, units("1125000000000000")},
+		{"midway down the ramp", 800, units("450000000000000000")},
+		{"drought reading", 600, units("675000000000000000")},
+		{"exactly at exit", 400, units("900000000000000000")},
+		{"below exit stays capped", 0, units("900000000000000000")},
 	}
 
 	for _, tt := range tests {
@@ -62,7 +64,7 @@ func TestEvaluatePayoutRamp(t *testing.T) {
 func TestEvaluatePayoutDustFloor(t *testing.T) {
 	model := rampModel()
 	// Raise the floor above what a marginal shortfall can earn.
-	model.MinPayoutWei = wei("10000000000000000")
+	model.MinPayoutUnits = units("10000000000000000")
 
 	got, err := evaluatePayout(&model, big.NewInt(1199))
 	if err != nil {
@@ -77,7 +79,7 @@ func TestEvaluatePayoutDustFloor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluatePayout: %v", err)
 	}
-	if got.Cmp(wei("675000000000000000")) != 0 {
+	if got.Cmp(units("675000000000000000")) != 0 {
 		t.Errorf("payout = %s, want 675000000000000000", got)
 	}
 }
@@ -90,8 +92,8 @@ func TestEvaluatePayoutNeverExceedsSumInsured(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluatePayout: %v", err)
 	}
-	if got.Cmp(model.SumInsuredWei) != 0 {
-		t.Errorf("payout = %s, want it capped at the sum insured %s", got, model.SumInsuredWei)
+	if got.Cmp(model.SumInsuredUnits) != 0 {
+		t.Errorf("payout = %s, want it capped at the sum insured %s", got, model.SumInsuredUnits)
 	}
 }
 
@@ -166,7 +168,7 @@ func TestEvaluateThroughRouterPaysOnlyOnDrought(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode dry decision: %v", err)
 	}
-	if dryDecision.PayoutAmount.Cmp(wei("675000000000000000")) != 0 {
+	if dryDecision.PayoutAmount.Cmp(units("675000000000000000")) != 0 {
 		t.Errorf("dry payout = %s, want 675000000000000000", dryDecision.PayoutAmount)
 	}
 
