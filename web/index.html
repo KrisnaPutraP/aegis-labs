@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aegis, confidential underwriting on Flare</title>
+<meta name="description" content="The insurer's risk model stays sealed inside a TEE. Rainfall is verified by Flare consensus. Payouts settle on-chain, live on Coston2.">
+<link rel="stylesheet" href="styles.css">
+<script src="config.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+
+<header class="hero">
+  <img class="hero__photo" src="public/petani.jpg" alt="A farmer working a flooded rice field under a heavy sky">
+  <div class="hero__scrim" aria-hidden="true"></div>
+
+  <div class="hero__bar">
+    <span class="wordmark">AEGIS</span>
+    <span class="badge-live"><span class="badge-live__dot" aria-hidden="true"></span>live on coston2</span>
+  </div>
+
+  <div class="hero__content">
+    <p class="hero__eyebrow">CONFIDENTIAL UNDERWRITING ENGINE</p>
+    <h1 class="hero__headline">The insurer's model stays secret. The payout stays provable.</h1>
+    <p class="hero__subtext">Risk models run sealed inside a TEE. Rainfall is verified by Flare consensus. Payouts settle automatically, so the farmer never has to trust anyone.</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Status line for the whole dashboard: every number below is read from Coston2. -->
+  <div class="statusbar" id="statusbar">
+    <span class="statusbar__label">On-chain dashboard</span>
+    <span class="statusbar__state" id="status-text">Reading Coston2</span>
+    <span class="statusbar__age" id="status-age"></span>
+  </div>
+
+  <!-- 1. Actors -->
+  <section class="section" id="actors">
+    <div class="section__head">
+      <p class="section__kicker">WHO IS PROTECTED FROM WHOM</p>
+      <h2 class="section__title">Two parties, one shared proof</h2>
+    </div>
+    <div class="actor-strip">
+      <article class="actor">
+        <h3 class="actor__role">Insurer</h3>
+        <p class="actor__claim">Owns the secret model, and cannot renege on it.</p>
+        <p class="actor__detail">Pricing thresholds and loading factors are the insurer's intellectual property, and publishing them invites adverse selection. They are encrypted to the enclave and never appear on-chain, in a log, or in an error message.</p>
+      </article>
+      <article class="actor">
+        <h3 class="actor__role">Farmer</h3>
+        <p class="actor__claim">Gets an automatic payout, with no blind trust.</p>
+        <p class="actor__detail">The trigger data is attested by Flare's Data Connector and the decision carries a TEE signature that the settlement contract verifies. Nobody has to take the insurer at their word, and nobody has to file a claim.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- 2. Sealed model -->
+  <section class="section" id="sealed">
+    <div class="section__head">
+      <p class="section__kicker">WHAT STAYS HIDDEN</p>
+      <h2 class="section__title">The sealed model</h2>
+      <p class="section__lede">These five parameters decide what a drought is worth. They live in enclave memory only, so this page cannot show them, and neither can the chain.</p>
+    </div>
+
+    <div class="sealed-grid">
+      <article class="card card--secret">
+        <h3 class="card__title">Insurer risk model, per policy</h3>
+        <dl class="param-list">
+          <div class="param"><dt>triggerTenthsMm</dt><dd class="masked">&bull;&bull;&bull;&bull;&bull;</dd></div>
+          <div class="param"><dt>exitTenthsMm</dt><dd class="masked">&bull;&bull;&bull;&bull;&bull;</dd></div>
+          <div class="param"><dt>sumInsuredUnits</dt><dd class="masked">&bull;&bull;&bull;&bull;&bull;</dd></div>
+          <div class="param"><dt>payoutFactorBps</dt><dd class="masked">&bull;&bull;&bull;&bull;&bull;</dd></div>
+          <div class="param"><dt>minPayoutUnits</dt><dd class="masked">&bull;&bull;&bull;&bull;&bull;</dd></div>
+        </dl>
+        <p class="card__foot">Field names are public, from the extension's type definition. The values are decrypted inside the enclave and held in RAM, which is also why a restart requires the insurer to register the model again.</p>
+      </article>
+
+      <article class="card">
+        <h3 class="card__title">Enclave state, read live</h3>
+        <dl class="kv">
+          <div class="kv__row"><dt>Models loaded</dt><dd class="mono" id="state-models">--</dd></div>
+          <div class="kv__row"><dt>State version</dt><dd class="mono" id="state-version">--</dd></div>
+          <div class="kv__row"><dt>TEE machine</dt><dd class="mono" id="tee-machine">--</dd></div>
+          <div class="kv__row"><dt>Machine status</dt><dd id="tee-status">--</dd></div>
+          <div class="kv__row"><dt>Extension id</dt><dd class="mono" id="extension-id">--</dd></div>
+        </dl>
+
+        <button class="reveal-btn" id="reveal-btn" type="button">try to reveal parameters</button>
+        <div class="reveal-out" id="reveal-out" aria-live="polite" hidden></div>
+        <p class="card__foot">The button issues a real request to the enclave's state endpoint and prints whatever comes back.</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- 3. Chain of trust -->
+  <section class="section" id="trust">
+    <div class="section__head">
+      <p class="section__kicker">HOW ONE PAYOUT WAS PROVED</p>
+      <h2 class="section__title">Chain of trust</h2>
+      <p class="section__lede">The most recent policy that paid, traced from the weather reading to the money. Every step links to Coston2.</p>
+    </div>
+
+    <ol class="steps" id="steps">
+      <li class="step" id="step-data">
+        <p class="step__index">01</p>
+        <p class="step__name">DATA</p>
+        <p class="step__value mono" id="data-value">--</p>
+        <p class="step__note" id="data-note">Open-Meteo archive</p>
+        <a class="step__link" id="data-link" href="#" target="_blank" rel="noopener">view on explorer</a>
+      </li>
+      <li class="step" id="step-fdc">
+        <p class="step__index">02</p>
+        <p class="step__name">FDC</p>
+        <p class="step__value mono" id="fdc-value">--</p>
+        <p class="step__note" id="fdc-note">Merkle proof verified on-chain</p>
+        <a class="step__link" id="fdc-link" href="#" target="_blank" rel="noopener">view on explorer</a>
+      </li>
+      <li class="step" id="step-tee">
+        <p class="step__index">03</p>
+        <p class="step__name">TEE</p>
+        <p class="step__value mono" id="tee-value">--</p>
+        <p class="step__note" id="tee-note">Decision signed in the enclave</p>
+        <a class="step__link" id="tee-link" href="#" target="_blank" rel="noopener">view on explorer</a>
+      </li>
+      <li class="step step--payout" id="step-payout">
+        <p class="step__index">04</p>
+        <p class="step__name">PAYOUT</p>
+        <p class="step__value mono" id="payout-value">--</p>
+        <p class="step__note" id="payout-note">Settled from the pool</p>
+        <a class="step__link" id="payout-link" href="#" target="_blank" rel="noopener">view on explorer</a>
+      </li>
+    </ol>
+  </section>
+
+  <!-- 4. Proof of settlement -->
+  <section class="section" id="settlement">
+    <div class="section__head">
+      <p class="section__kicker">WHERE THE MONEY WENT</p>
+      <h2 class="section__title">Proof of settlement</h2>
+    </div>
+
+    <div class="metrics">
+      <article class="metric">
+        <p class="metric__label">Pool balance</p>
+        <p class="metric__value mono" id="pool-balance">--</p>
+        <p class="metric__note" id="pool-note">Liquidity held by the payout executor</p>
+      </article>
+      <article class="metric">
+        <p class="metric__label">Received by farmer</p>
+        <p class="metric__value mono" id="paid-amount">--</p>
+        <p class="metric__note" id="paid-note">Recipient named in the signed decision</p>
+        <p class="metric__address mono" id="paid-address"></p>
+      </article>
+      <article class="metric">
+        <p class="metric__label">Policy status</p>
+        <p class="metric__value" id="policy-status">--</p>
+        <p class="metric__note" id="policy-note">Settlement is recorded before funds move</p>
+      </article>
+    </div>
+
+    <div class="contrast">
+      <article class="season season--pays" id="season-dry">
+        <p class="season__label">Dry season</p>
+        <p class="season__verdict">PAYS</p>
+        <p class="season__amount mono" id="dry-amount">--</p>
+        <p class="season__detail" id="dry-detail">--</p>
+        <p class="season__policy mono" id="dry-policy">--</p>
+      </article>
+      <article class="season season--zero" id="season-wet">
+        <p class="season__label">Wet season</p>
+        <p class="season__verdict">ZERO</p>
+        <p class="season__amount mono" id="wet-amount">--</p>
+        <p class="season__detail" id="wet-detail">--</p>
+        <p class="season__policy mono" id="wet-policy">--</p>
+      </article>
+      <p class="contrast__caption">Same model, same location, the outcome differs purely from attested data.</p>
+    </div>
+
+    <article class="card card--technical">
+      <h3 class="card__title">Deployment</h3>
+      <dl class="kv kv--wide" id="tech-panel">
+        <div class="kv__row"><dt>InstructionSender</dt><dd class="mono"><a id="tech-sender" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>PolicySettlement</dt><dd class="mono"><a id="tech-settlement" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>Payout executor</dt><dd class="mono"><a id="tech-executor" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>Payout asset</dt><dd class="mono"><a id="tech-asset" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>Settle transaction</dt><dd class="mono"><a id="tech-settle-tx" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>Evaluate transaction</dt><dd class="mono"><a id="tech-eval-tx" href="#" target="_blank" rel="noopener">--</a></dd></div>
+        <div class="kv__row"><dt>Bound attestation request</dt><dd class="mono" id="tech-request-hash">--</dd></div>
+        <div class="kv__row"><dt>Extension id</dt><dd class="mono" id="tech-extension">--</dd></div>
+      </dl>
+    </article>
+  </section>
+
+  <footer class="footer">
+    <p>Read-only demo. This page never connects a wallet and never sends a transaction, it only reads Coston2.</p>
+    <p>Contract state comes from the Coston2 RPC endpoint, event history from the Coston2 explorer API, and enclave state from the extension's own <span class="mono">GET /state</span> endpoint.</p>
+    <p>Hero photograph by Sergio Capuzzimati on Unsplash.</p>
+  </footer>
+
+</main>
+
+</body>
+</html>

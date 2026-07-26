@@ -41,6 +41,8 @@ go/tools/run-*
 go/tools/*.exe
 go/tools/check-tee-state*
 !go/tools/cmd/check-tee-state/
+# Built by scripts/state-bridge.sh for the demo bridge container
+go/tools/bin/
 
 # Hand-off image tarballs (produced by scripts/build-image.sh)
 sign-extension-*.tar
