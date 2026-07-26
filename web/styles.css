@@ -94,13 +94,26 @@ a:focus-visible, button:focus-visible {
   padding-top: 28px;
 }
 
-/* The mark carries the name, so it sits where the wordmark used to. The shadow
-   keeps its dark navy edges readable wherever the photograph is bright. */
-.wordmark {
+/* Mark and name as one lockup. The shadow sits on both so they hold together
+   wherever the photograph behind them is bright. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  filter: drop-shadow(0 2px 10px rgba(11, 11, 18, 0.6));
+}
+
+.brand__mark {
   display: block;
   width: auto;
   height: 56px;
-  filter: drop-shadow(0 2px 10px rgba(11, 11, 18, 0.6));
+}
+
+.brand__name {
+  color: #FFFFFF;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  font-size: 0.95rem;
 }
 
 .badge-live {
