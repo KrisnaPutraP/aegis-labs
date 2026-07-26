@@ -10,7 +10,7 @@ Submitted to **Flare Summer Signal, Bounty 2 (Confidential Compute Apps)**, in t
 private scoring category. The first instantiation is parametric drought cover for
 smallholder farmers, and the engine underneath is not specific to weather.
 
-- Repository: [GITHUB_REPO_URL]
+- Repository: https://github.com/KrisnaPutraP/aegis-labs
 - Demo video: [VIDEO_LINK]
 - Live on Coston2, with contract addresses and settled transactions under
   [Live deployment](#live-deployment-on-coston2)
@@ -305,8 +305,10 @@ page.
 
 ### Running it yourself
 
-Prerequisites are the stack described in `TUTORIAL.md`: Docker, an ngrok reserved
-domain, a funded Coston2 key, and `.env` filled in.
+Prerequisites: Docker, a funded Coston2 key, an ngrok reserved domain so the TEE
+proxy is reachable from the network, and a `.env` filled in from `.env.example`.
+`INITIAL_OWNER` and `GOVERNANCE_SIGNERS` must both be the address derived from
+`DEPLOYMENT_PRIVATE_KEY`, or TEE registration reverts.
 
 ```bash
 ./scripts/start-services.sh          # bring the stack up
@@ -506,7 +508,7 @@ than letting a reviewer find them.
 | `go/tools/cmd/aegis/` | The demo command line |
 | `go/tools/cmd/run-test/` | The end to end test, which reads as a narration of the whole path |
 | `web/` | The read only dashboard |
-| `ARCHITECTURE.md`, `TUTORIAL.md` | Design decisions, and the build guide with its troubleshooting appendix |
+| `scripts/` | Stack setup, the end to end run, the demo web server, and the read only state bridge |
 
 The demo model's parameters live in `go/tools/cmd/run-test/main.go` and in the CLI,
 because in this demo the test plays the insurer, the one party that legitimately
