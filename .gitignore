@@ -27,7 +27,7 @@ out/
 cache/
 
 # Generated contract bindings (produced by scripts/generate-bindings.sh)
-go/tools/pkg/contracts/*/autogen.go
+go/tools/pkg/contracts/*/autogen*.go
 go/tools/pkg/contracts/*/*.abi
 go/tools/pkg/contracts/*/*.bin
 
