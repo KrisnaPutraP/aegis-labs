@@ -8,6 +8,7 @@
 #   CHAIN_URL           — chain RPC URL (default: http://127.0.0.1:8545)
 #   ADDRESSES_FILE      — path to deployed-addresses.json (auto-detected if unset)
 #   INSTRUCTION_SENDER  — deployed InstructionSender address (from config/extension.env)
+#   POLICY_SETTLEMENT   — deployed PolicySettlement address (from config/settlement.env)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -30,6 +31,14 @@ if [[ -f "$CONFIG_FILE" ]]; then
     log "Loaded config from $CONFIG_FILE"
 fi
 
+# Written by cmd/deploy-settlement. Carries POLICY_SETTLEMENT, which the test
+# needs to settle a decision and prove the payout actually moved FXRP.
+SETTLEMENT_FILE="$PROJECT_DIR/config/settlement.env"
+if [[ -f "$SETTLEMENT_FILE" ]]; then
+    source "$SETTLEMENT_FILE"
+    log "Loaded settlement config from $SETTLEMENT_FILE"
+fi
+
 if [[ -z "${EXT_PROXY_URL:-}" ]]; then
     if docker compose ps ext-proxy --status running 2>/dev/null | grep -q ext-proxy; then
         EXT_PROXY_URL="http://localhost:6674"
@@ -45,6 +54,8 @@ fi
 INSTRUCTION_SENDER="${INSTRUCTION_SENDER:-}"
 
 [[ -n "$INSTRUCTION_SENDER" ]] || die "INSTRUCTION_SENDER not set. Run pre-build.sh first or set it manually."
+POLICY_SETTLEMENT="${POLICY_SETTLEMENT:-}"
+[[ -n "$POLICY_SETTLEMENT" ]] || die "POLICY_SETTLEMENT not set. Run: cd go/tools && go run ./cmd/deploy-settlement --instructionSender \$INSTRUCTION_SENDER -o ../../config/settlement.env"
 
 LOCAL_MODE="${LOCAL_MODE:-true}"
 if [[ -z "$ADDRESSES_FILE" ]]; then
@@ -84,6 +95,7 @@ log "Extension proxy:    $EXT_PROXY_URL"
 log "Chain URL:          $CHAIN_URL"
 log "Addresses file:     $ADDRESSES_FILE"
 log "InstructionSender:  $INSTRUCTION_SENDER"
+log "PolicySettlement:   $POLICY_SETTLEMENT"
 
 if ! curl -sf -o /dev/null "$EXT_PROXY_URL/info" 2>/dev/null; then
     die "Extension proxy not reachable at $EXT_PROXY_URL. Is Docker Compose running? (docker compose up -d)"
@@ -97,6 +109,7 @@ go run ./cmd/run-test \
     -c "$CHAIN_URL" \
     -p "$EXT_PROXY_URL" \
     -instructionSender "$INSTRUCTION_SENDER" \
+    -settlement "$POLICY_SETTLEMENT" \
     || die "Test failed"
 
 echo ""

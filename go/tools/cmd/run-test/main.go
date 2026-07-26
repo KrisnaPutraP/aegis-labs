@@ -16,6 +16,9 @@
 //     to another policy is rejected on-chain
 //  8. evaluate both policies with their proofs and check each signed decision
 //     against what the hidden model implies for the attested rainfall
+//  9. settle those decisions on-chain and check the FXRP actually moved: the
+//     recipient gained exactly what the enclave signed, the pool lost exactly
+//     that, and the decision cannot be replayed
 //
 // Two policies cover the same location but different seasons, so the readings
 // come from real history and cannot be chosen by the test: a dry-season window
@@ -41,12 +44,15 @@ import (
 
 	"sign-extension/pkg/types"
 	"sign-extension/tools/pkg/configs"
+	"sign-extension/tools/pkg/contracts/settlement"
 	"sign-extension/tools/pkg/contracts/sign"
 	"sign-extension/tools/pkg/fccutils"
 	"sign-extension/tools/pkg/fdc"
+	"sign-extension/tools/pkg/payout"
 	"sign-extension/tools/pkg/support"
 	instrutils "sign-extension/tools/pkg/utils"
 
+	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/ecies"
@@ -58,10 +64,12 @@ import (
 // testPayoutTo is the policyholder address the decision must echo back.
 var testPayoutTo = common.HexToAddress("0x000000000000000000000000000000000000dEaD")
 
-// proofTimeout bounds the wait for a voting round to finalize. Flare quotes
-// 90–180 seconds; the extra headroom absorbs a slow round without turning a
-// stalled FDC into an hour-long hang.
-const proofTimeout = 8 * time.Minute
+// proofTimeout bounds the wait on one voting round. Flare quotes 90–180 seconds
+// for finalization, so four minutes is already generous — and since a round that
+// finalizes without the request never produces the proof no matter how long the
+// wait, patience past that point buys nothing. Re-requesting (see proofAttempts)
+// is what actually recovers.
+const proofTimeout = 4 * time.Minute
 
 // testPolicy is one policy under test: an id, the public weather feed it settles
 // on, and what the attested reading is expected to do to the payout.
@@ -75,12 +83,22 @@ type testPolicy struct {
 	abiEncodedRequest []byte
 	votingRound       uint64
 	proof             *sign.IWeb2JsonProof
+
+	// decision is the signed action result the enclave returned, kept so the
+	// settlement step can relay the very bytes step 8 checked.
+	decision *teetypes.ActionResponse
 }
 
 // testPolicies covers one location over two seasons. Surabaya's dry season is
 // reliably below the insurer's trigger and its wet season reliably above it, but
 // the test asserts that rather than assuming it.
-func testPolicies() []*testPolicy {
+//
+// Policy ids are scoped to the run. They have to be: a policy pays once and
+// closes, and its trigger binding is write-once, so fixed ids would let this
+// test pass exactly once per deployment and fail ever after — the worst kind of
+// test, since the second failure looks like a regression. The readable prefix is
+// kept so logs still say which policy is which.
+func testPolicies(runNonce []byte) []*testPolicy {
 	const (
 		latitude  = "-7.25"
 		longitude = "112.75"
@@ -89,7 +107,7 @@ func testPolicies() []*testPolicy {
 	return []*testPolicy{
 		{
 			label:         "dry season (drought)",
-			id:            common.HexToHash("0x000000000000000000000000000000000000000000000000000000000000a3d1"),
+			id:            policyID(0xa3d1, runNonce),
 			shouldTrigger: true,
 			feed: fdc.DroughtFeed{
 				LatitudeDeg:  latitude,
@@ -100,7 +118,7 @@ func testPolicies() []*testPolicy {
 		},
 		{
 			label:         "wet season (normal)",
-			id:            common.HexToHash("0x000000000000000000000000000000000000000000000000000000000000a3d2"),
+			id:            policyID(0xa3d2, runNonce),
 			shouldTrigger: false,
 			feed: fdc.DroughtFeed{
 				LatitudeDeg:  latitude,
@@ -110,6 +128,27 @@ func testPolicies() []*testPolicy {
 			},
 		},
 	}
+}
+
+// policyID builds a run-unique policy id that still reads as an 0xa3d1-style
+// identifier in logs: two bytes of prefix, then the run's nonce.
+func policyID(prefix uint16, runNonce []byte) common.Hash {
+	var id common.Hash
+	id[0] = byte(prefix >> 8)
+	id[1] = byte(prefix)
+	copy(id[2:], runNonce)
+
+	return id
+}
+
+// newRunNonce draws the 30 bytes that make this run's policy ids unique.
+func newRunNonce() []byte {
+	nonce := make([]byte, 30)
+	if _, err := rand.Read(nonce); err != nil {
+		fccutils.FatalWithCause(errors.Errorf("drawing a run nonce: %s", err))
+	}
+
+	return nonce
 }
 
 // testModel is the insurer's confidential model: cover starts below 120.0 mm of
@@ -149,21 +188,34 @@ func main() {
 	cf := flag.String("c", configs.ChainNodeURL, "chain node url")
 	pf := flag.String("p", configs.ExtensionProxyURL, "extension proxy url")
 	instructionSenderF := flag.String("instructionSender", os.Getenv("INSTRUCTION_SENDER"), "InstructionSender contract address")
+	settlementF := flag.String("settlement", os.Getenv("POLICY_SETTLEMENT"), "PolicySettlement contract address")
 	flag.Parse()
 
 	if *instructionSenderF == "" {
 		logger.Fatal("--instructionSender flag is required (or set INSTRUCTION_SENDER in .env)")
 	}
+	if *settlementF == "" {
+		logger.Fatal("--settlement flag is required (or set POLICY_SETTLEMENT in config/settlement.env). " +
+			"Deploy it with: go run ./cmd/deploy-settlement --instructionSender <address>")
+	}
 
 	instructionSenderAddress := common.HexToAddress(*instructionSenderF)
+	settlementAddress := common.HexToAddress(*settlementF)
 
 	testSupport, err := support.DefaultSupport(*af, *cf)
 	if err != nil {
 		fccutils.FatalWithCause(err)
 	}
 
-	policies := testPolicies()
+	policies := testPolicies(newRunNonce())
 	fdcClient := fdc.NewClient()
+
+	// --- Step 0: the pool has to be able to cover the worst case ---
+	//
+	// Checked before anything is spent. An FDC round costs a fee and three
+	// minutes, and discovering at the very end that the pool is empty would
+	// report as a settlement bug rather than as an unfunded demo.
+	pool := checkPoolCanCover(testSupport, settlementAddress, testModel().SumInsuredUnits)
 
 	// --- Step 1: setExtensionId ---
 	logger.Infof("Step 1: Setting extension ID on InstructionSender...")
@@ -238,12 +290,7 @@ func main() {
 	// --- Step 6: collect the Merkle proofs ---
 	logger.Infof("Step 6: Waiting for the FDC voting rounds to finalize (90-180s)...")
 	for _, p := range policies {
-		ctx, cancel := context.WithTimeout(context.Background(), proofTimeout)
-		proof, err := fdcClient.WaitForProof(ctx, p.votingRound, p.abiEncodedRequest, 15*time.Second)
-		cancel()
-		if err != nil {
-			fccutils.FatalWithCause(errors.Errorf("retrieve proof (%s): %s", p.label, err))
-		}
+		proof := collectProof(testSupport, fdcClient, p)
 		p.proof = proof
 
 		reading, err := fdc.DecodeWeatherReading(proof)
@@ -287,13 +334,65 @@ func main() {
 		}
 		if !p.shouldTrigger && payout.Sign() != 0 {
 			fccutils.FatalWithCause(errors.Errorf(
-				"FAIL (%s): rainfall above the trigger must not pay out, got %s wei", p.label, payout))
+				"FAIL (%s): rainfall above the trigger must not pay out, got %s units", p.label, payout))
 		}
 
-		logger.Infof("Decision (%s): %s wei", p.label, payout)
+		logger.Infof("Decision (%s): %s %s", p.label, pool.format(payout), pool.symbol)
 	}
 
+	// --- Step 9: settle the decisions and check the money actually moved ---
+	for _, p := range policies {
+		settlePolicy(testSupport, settlementAddress, pool, p)
+	}
+	assertReplayRejected(testSupport, settlementAddress, policies[0])
+
 	logger.Infof("All tests passed.")
+}
+
+// proofAttempts is how many voting rounds a request gets before the run gives up.
+//
+// One attempt is not enough. Data providers attest a request by re-fetching the
+// source, and a public weather API that is slow or rate-limiting them at that
+// moment simply leaves the request out of the round's Merkle tree — silently,
+// and for that round only. It is not a failure of anything Aegis built, but it
+// does fail the run, which during a recorded demo is indistinguishable from a
+// broken payout path. Re-requesting costs one more FDC fee and one more round.
+const proofAttempts = 3
+
+// collectProof waits for a policy's attestation to be provable, re-requesting it
+// in a fresh round if the round it went into came back without it.
+//
+// Deliberately NOT done: reusing a proof from some earlier round the request may
+// already sit in. Evaluations must move forward — InstructionSender rejects an
+// attestation older than the last one a policy accepted — and quietly reaching
+// for a stale round would hollow out that check to make a test go green.
+func collectProof(s *support.Support, client *fdc.Client, p *testPolicy) *sign.IWeb2JsonProof {
+	for attempt := 1; ; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), proofTimeout)
+		proof, err := client.WaitForProof(ctx, p.votingRound, p.abiEncodedRequest, 15*time.Second)
+		cancel()
+
+		if err == nil {
+			return proof
+		}
+		if attempt >= proofAttempts {
+			fccutils.FatalWithCause(errors.Errorf(
+				"retrieve proof (%s): giving up after %d rounds — the last was %d. "+
+					"The round finalizes either way, so this means data providers did not attest "+
+					"the request; check the source API is reachable and not rate-limiting them: %s",
+				p.label, proofAttempts, p.votingRound, err))
+		}
+
+		logger.Warnf("  %s: round %d finalized without attesting the request; re-requesting (attempt %d of %d)",
+			p.label, p.votingRound, attempt+1, proofAttempts)
+
+		round, txHash, err := fdc.SubmitRequest(s, p.abiEncodedRequest)
+		if err != nil {
+			fccutils.FatalWithCause(errors.Errorf("re-submit attestation request (%s): %s", p.label, err))
+		}
+		p.votingRound = round
+		logger.Infof("  %s: re-submitted into voting round %d (tx %s)", p.label, round, txHash.Hex())
+	}
 }
 
 // bindPolicyTrigger registers the policy's one permitted attestation request, or
@@ -421,7 +520,7 @@ func runEvaluate(
 			"FAIL (%s): payout address %s, expected %s", p.label, decision.PayoutTo.Hex(), testPayoutTo.Hex()))
 	}
 
-	logger.Infof("  Decision: policy=%s payout=%s wei to %s",
+	logger.Infof("  Decision: policy=%s payout=%s units to %s",
 		decision.PolicyID.Hex(), decision.PayoutAmount, decision.PayoutTo.Hex())
 
 	// The TEE identity signs every action result; without that signature the
@@ -434,7 +533,253 @@ func runEvaluate(
 	assertNoSecrets(fmt.Sprintf("evaluate action result (%s)", p.label),
 		[]byte(resp.Result.Log), resp.Result.Data)
 
+	p.decision = resp
+
 	return decision.PayoutAmount
+}
+
+// payoutPool is everything the settlement checks need to know about the money:
+// which token, how it renders, and where the float sits.
+type payoutPool struct {
+	token    *payout.ERC20
+	executor common.Address
+	symbol   string
+	decimals uint8
+}
+
+func (p *payoutPool) format(amount *big.Int) string {
+	return payout.FormatUnits(amount, p.decimals)
+}
+
+func (p *payoutPool) balanceOf(account common.Address) *big.Int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	balance, err := p.token.BalanceOf(ctx, account)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("reading balance of %s: %s", account.Hex(), err))
+	}
+
+	return balance
+}
+
+// checkPoolCanCover resolves the payout asset behind the settlement contract and
+// refuses to start unless the pool could pay the largest claim the model can
+// produce.
+//
+// Reading the executor out of the settlement contract rather than taking it as a
+// flag also proves the wiring: if setPayoutExecutor was never called, this is
+// where the run stops, before an FDC fee is spent.
+func checkPoolCanCover(s *support.Support, settlementAddress common.Address, worstCase *big.Int) *payoutPool {
+	logger.Infof("Step 0: Checking the payout pool...")
+
+	contract, err := settlement.NewPolicySettlement(settlementAddress, s.ChainClient)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("binding PolicySettlement at %s: %s", settlementAddress.Hex(), err))
+	}
+
+	executor, err := contract.PayoutExecutor(nil)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("reading payoutExecutor: %s", err))
+	}
+	if executor == (common.Address{}) {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL: %s has no payout executor — run cmd/deploy-settlement, which wires one up",
+			settlementAddress.Hex()))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	fxrp, err := payout.ResolveFxrp(ctx, s.ChainClient)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("resolving FXRP: %s", err))
+	}
+	token, err := payout.NewERC20(fxrp, s.ChainClient)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	symbol, decimals, err := token.Metadata(ctx)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+
+	pool := &payoutPool{token: token, executor: executor, symbol: symbol, decimals: decimals}
+	balance := pool.balanceOf(executor)
+
+	logger.Infof("  Settlement: %s", settlementAddress.Hex())
+	logger.Infof("  Executor:   %s holding %s %s", executor.Hex(), pool.format(balance), symbol)
+
+	if balance.Cmp(worstCase) < 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL: the pool holds %s %s but this model can owe up to %s — fund it with "+
+				"cmd/fund-pool (mint test FXRP as described in TUTORIAL.md §8)",
+			pool.format(balance), symbol, pool.format(worstCase)))
+	}
+
+	return pool
+}
+
+// settlePolicy relays one signed decision to PolicySettlement and checks the
+// money moved exactly as the decision said it would.
+//
+// This is the assertion Phase 4 exists for. Everything before it proves the
+// enclave decided correctly in private; this proves the chain acted on that
+// decision, for the amount the enclave signed, without anyone having to be
+// trusted in between.
+func settlePolicy(
+	s *support.Support,
+	settlementAddress common.Address,
+	pool *payoutPool,
+	p *testPolicy,
+) {
+	logger.Infof("Step 9 (%s): Settling the signed decision...", p.label)
+
+	if p.decision == nil {
+		fccutils.FatalWithCause(errors.Errorf("FAIL (%s): no decision to settle", p.label))
+	}
+
+	recipientBefore := pool.balanceOf(testPayoutTo)
+	poolBefore := pool.balanceOf(pool.executor)
+
+	txHash, decision, err := payout.Settle(s, settlementAddress, p.decision)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("settle (%s): %s", p.label, err))
+	}
+	logger.Infof("  settle tx: %s", txHash.Hex())
+	// The enclave that signed is recovered off-chain from the same preimage the
+	// contract used, so the log names the machine the chain just believed.
+	logger.Infof("  signed by TEE %s", decision.TeeID.Hex())
+
+	recipientAfter := pool.balanceOf(testPayoutTo)
+	poolAfter := pool.balanceOf(pool.executor)
+
+	recipientDelta := new(big.Int).Sub(recipientAfter, recipientBefore)
+	poolDelta := new(big.Int).Sub(poolBefore, poolAfter)
+
+	if recipientDelta.Cmp(decision.PayoutAmount) != 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): the enclave decided %s %s but the recipient received %s",
+			p.label, pool.format(decision.PayoutAmount), pool.symbol, pool.format(recipientDelta)))
+	}
+	// The pool must fund the payout exactly — no more left it, no third party
+	// topped it up mid-settlement.
+	if poolDelta.Cmp(decision.PayoutAmount) != 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): the pool moved %s %s for a %s payout",
+			p.label, pool.format(poolDelta), pool.symbol, pool.format(decision.PayoutAmount)))
+	}
+
+	// And the chain must have recorded it, so the policy cannot be paid again.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	record, err := payout.SettlementOf(ctx, s, settlementAddress, p.id)
+	if err != nil {
+		fccutils.FatalWithCause(err)
+	}
+	if !record.Settled {
+		fccutils.FatalWithCause(errors.Errorf("FAIL (%s): policy is not recorded as settled", p.label))
+	}
+	if record.Amount.Cmp(decision.PayoutAmount) != 0 {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): recorded %s %s, decision said %s",
+			p.label, pool.format(record.Amount), pool.symbol, pool.format(decision.PayoutAmount)))
+	}
+	if record.InstructionID != p.decision.Result.ID {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL (%s): recorded instruction %s, settled %s",
+			p.label, record.InstructionID.Hex(), p.decision.Result.ID.Hex()))
+	}
+
+	if p.shouldTrigger {
+		if record.PayoutTo != testPayoutTo {
+			fccutils.FatalWithCause(errors.Errorf(
+				"FAIL (%s): recorded recipient %s, expected %s",
+				p.label, record.PayoutTo.Hex(), testPayoutTo.Hex()))
+		}
+		logger.Infof("  Paid %s %s to %s (pool now %s)",
+			pool.format(decision.PayoutAmount), pool.symbol, testPayoutTo.Hex(), pool.format(poolAfter))
+	} else {
+		// A policy that owes nothing still closes on-chain, and must not have
+		// touched the pool.
+		if decision.PayoutAmount.Sign() != 0 {
+			fccutils.FatalWithCause(errors.Errorf(
+				"FAIL (%s): a wet-season policy settled for %s %s",
+				p.label, pool.format(decision.PayoutAmount), pool.symbol))
+		}
+		logger.Infof("  Closed with nothing owed; the pool is untouched at %s %s",
+			pool.format(poolAfter), pool.symbol)
+	}
+}
+
+// assertReplayRejected proves the settlement record does real work: the same
+// signed decision, presented a second time, must not pay again.
+//
+// Simulated rather than sent, so the check costs no gas and reports the contract's
+// own revert reason instead of an opaque failure.
+func assertReplayRejected(s *support.Support, settlementAddress common.Address, p *testPolicy) {
+	logger.Infof("Step 9: Checking a settled decision cannot be replayed...")
+
+	parsed, err := settlement.PolicySettlementMetaData.GetAbi()
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("loading PolicySettlement ABI: %s", err))
+	}
+
+	callData, err := parsed.Pack(
+		"settle",
+		[32]byte(p.decision.Result.ID),
+		p.decision.Result.Status,
+		string(p.decision.Result.SubmissionTag),
+		[]byte(p.decision.Result.Data),
+		[]byte(p.decision.Signature),
+	)
+	if err != nil {
+		fccutils.FatalWithCause(errors.Errorf("packing replayed settle: %s", err))
+	}
+
+	from := crypto.PubkeyToAddress(s.Prv.PublicKey)
+	reason := fccutils.SimulateAndDecodeRevert(s.ChainClient, from, settlementAddress, big.NewInt(0), callData)
+
+	// PolicySettlement reverts with custom errors, and the shared decoder only
+	// understands Error(string) — so it hands back the raw revert data. Match on
+	// the selector instead, derived from the ABI rather than typed out, so a
+	// renamed error fails the build instead of silently never matching.
+	guard := replayGuardSelectors(parsed)
+	if !matchesAnySelector(reason, guard) {
+		fccutils.FatalWithCause(errors.Errorf(
+			"FAIL: replaying a settled decision was not rejected by a replay guard (got: %q, "+
+				"expected one of %v)", reason, guard))
+	}
+
+	logger.Infof("  Replay of %s rejected by the settlement record (%s)", p.label, reason)
+}
+
+// replayGuardSelectors returns the 4-byte selectors of the two errors that mean
+// "this has already been settled", as hex strings.
+func replayGuardSelectors(parsed *abi.ABI) []string {
+	selectors := make([]string, 0, 2)
+	for _, name := range []string{"DecisionAlreadySettled", "PolicyAlreadySettled"} {
+		customError, ok := parsed.Errors[name]
+		if !ok {
+			fccutils.FatalWithCause(errors.Errorf(
+				"PolicySettlement ABI has no %s error — was the replay guard renamed?", name))
+		}
+		selectors = append(selectors, hex.EncodeToString(customError.ID.Bytes()[:4]))
+	}
+
+	return selectors
+}
+
+func matchesAnySelector(revertData string, selectors []string) bool {
+	trimmed := strings.ToLower(strings.TrimPrefix(revertData, "0x"))
+	for _, selector := range selectors {
+		if strings.HasPrefix(trimmed, selector) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // expectedPayout mirrors the enclave's scoring function so the test can check
