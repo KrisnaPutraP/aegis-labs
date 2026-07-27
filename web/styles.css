@@ -640,3 +640,227 @@ main {
   .kv__row { flex-direction: column; align-items: flex-start; gap: 2px; }
   .kv__row dd { text-align: left; }
 }
+
+/* ---------- Try it yourself (interact.js) ----------
+
+   Its own block at the end of the file so the read-only dashboard's styles are
+   untouched. Every token here is one the page already defines. */
+
+.wallet {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  background: var(--shell);
+  margin-bottom: 28px;
+}
+
+.wallet__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 22px;
+}
+
+.wallet__field { display: flex; flex-direction: column; gap: 2px; }
+
+.wallet__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.wallet__faucet { margin-left: auto; font-size: 0.9rem; }
+
+.wallet__note { margin: 14px 0 0; color: var(--muted); font-size: 0.92rem; }
+.wallet__note.is-error { color: var(--danger); }
+
+.trybtn {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 9px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.trybtn:hover:not(:disabled) { background: #24215f; }
+
+.trybtn:disabled {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.trybtn--ghost { background: transparent; color: var(--accent); }
+.trybtn--ghost:hover:not(:disabled) { background: var(--accent-soft); }
+.trybtn--settle { margin-top: 12px; }
+
+.trylist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 18px;
+}
+
+.trycard {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+}
+
+.trycard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trycard__title { margin: 0; font-size: 1.02rem; }
+.trycard__desc { margin: 8px 0 14px; color: var(--muted); font-size: 0.92rem; }
+
+.trycard__kv { margin: 0 0 16px; display: grid; gap: 6px; }
+
+.trycard__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 5px;
+}
+
+.trycard__row dt { color: var(--muted); }
+.trycard__row dd { margin: 0; text-align: right; }
+
+.trycard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: auto;
+}
+
+.trycard__payout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  flex: 1 1 200px;
+}
+
+.trycard__payout > span { white-space: nowrap; }
+
+.trycard__input {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
+  width: 100%;
+  min-width: 0;
+}
+
+.trycard__input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.trycard__hint { margin: 10px 0 0; font-size: 0.85rem; color: var(--muted); }
+
+.trycard__warning {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+/* The run log. Deliberately plain text lines rather than a progress bar: the
+   wait is long and the honest thing is to say what is being waited on. */
+.trylog {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 0.85rem;
+}
+
+.trylog__line {
+  margin: 0 0 7px;
+  color: var(--muted);
+  padding-left: 16px;
+  position: relative;
+  overflow-wrap: anywhere;
+}
+
+.trylog__line::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.55em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.trylog__line.is-done { color: var(--ink); }
+.trylog__line.is-done::before { background: var(--ok); }
+
+.trylog__line.is-error { color: var(--danger); }
+.trylog__line.is-error::before { background: var(--danger); }
+
+.trylog__result {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border: 1px solid var(--secret-line);
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.try__note, .try__foot {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.try__foot { margin-top: 26px; }
+
+.try__subhead {
+  margin: 34px 0 12px;
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.tryhistory { display: grid; gap: 8px; }
+
+.trydone {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 18px;
+  padding: 11px 15px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--shell);
+  font-size: 0.87rem;
+}
+
+.trydone__name { font-weight: 500; }
+.trydone__amount { color: var(--ok); }
+.trydone__id { color: var(--muted); }
+.trydone__link { margin-left: auto; }
+
+@media (max-width: 620px) {
+  .wallet__faucet { margin-left: 0; }
+  .trydone__link { margin-left: 0; }
+}

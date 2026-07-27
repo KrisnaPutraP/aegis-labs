@@ -4,9 +4,20 @@ A single page that reads the live Coston2 deployment: what the enclave keeps
 sealed, what the Flare Data Connector attested, and what the settlement contract
 paid out.
 
-It is read only by design. There is no wallet connection, no signer and no write
-path anywhere in the code. Plain HTML, CSS and JavaScript, no build step, no
-dependencies.
+The dashboard is read only and needs no wallet. On top of it sits one optional
+section, "Try it yourself", where a visitor can run an evaluation and a
+settlement from their own wallet. Plain HTML, CSS and JavaScript, no build step,
+no dependencies.
+
+The two halves are kept apart on purpose. `app.js` is the dashboard and knows
+nothing about wallets. `abi.js` and `interact.js` are the write path, and if they
+fail to load, or the browser has no wallet, or the interactive config block in
+`config.js` is deleted, the page is exactly the read-only dashboard it was
+before. That is why the interactive part is a separate section and a separate
+script rather than a mode inside the existing code.
+
+The page never asks for, stores, or transmits a private key. It builds calldata
+and hands it to the visitor's wallet to sign.
 
 ## Run it
 
@@ -66,6 +77,64 @@ nothing to it.
 The endpoint carries a model count and a version string, never a parameter,
 which is the point the "try to reveal parameters" button demonstrates: it issues
 the request for real and prints whatever comes back.
+
+## Try it yourself
+
+Two actions, both already permissionless on the deployed contracts, so a visitor
+runs them from their own account without any access control being changed:
+
+| Step | What happens |
+|---|---|
+| evaluate | The FDC verifier encodes the policy's weather request, the visitor pays the attestation fee to `FdcHub`, the page waits for the voting round to finalize, fetches the Merkle proof from the DA Layer, and calls `InstructionSender.evaluate` |
+| settle | The page reads the enclave's signed result and calls `PolicySettlement.settle`, which verifies the TEE signature and pays out if the model triggered |
+
+Creating a policy is not offered. `registerPolicyTrigger` is owner only here, and
+opening it up would open a path to drain the payout pool. The policies a visitor
+can try are pre-created by the owner:
+
+```bash
+cd go/tools
+go run ./cmd/aegis register-model --policy drought-surabaya --new --web-config web/policies.json
+go run ./cmd/aegis register-model --policy monsoon-surabaya --new --web-config web/policies.json
+```
+
+A policy pays at most once and then closes, so each entry is single use and the
+list has to be topped up before a demo.
+
+`web/policies.json` carries the attestation request body each policy is bound to,
+which the chain does not store and a hash cannot be reversed into. It is public
+data by design, and the page verifies every entry before offering it: it asks
+`InstructionSender.triggerRequestHash` for the hash of what it holds and compares
+that against `policyTriggerRequestHash` on chain. A mismatch is shown as a
+warning on the card rather than being quietly skipped.
+
+### Two things a browser cannot do unaided
+
+Both were measured rather than assumed, and only the second needed a workaround.
+
+The **FDC verifier** and the **DA Layer** both answer cross-origin with
+`Access-Control-Allow-Origin: *`, so the page calls them directly. One difference
+from the Go client is load bearing: requests to the DA Layer must not carry
+`X-API-KEY`. Its CORS preflight allows `content-type` but not `x-api-key`, so a
+browser sending the key is blocked before the request leaves. The endpoint serves
+public testnet data without it.
+
+The **extension proxy** sets no CORS header at all, and reaching it through the
+public ngrok tunnel does not help either: that tunnel serves a browser an HTML
+interstitial instead of JSON, and the header documented to skip it turns the
+fetch into a preflighted request that the tunnel answers with 405. So settling
+needs a bridge, in the same shape as the state bridge:
+
+```bash
+./scripts/result-bridge.sh start | status | stop
+```
+
+`cmd/result-bridge` serves `GET /action/result/{id}` and nothing else, validates
+that the id looks like an instruction id before forwarding, reaches the proxy
+over the stack's own Docker network so no tunnel is involved, and publishes on
+loopback only. `POST /action`, the route that feeds work to the enclave, stays
+unreachable. Without it, evaluation still works and only the settle step reports
+that the signed result is unreachable.
 
 ## Credits
 

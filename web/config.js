@@ -25,4 +25,44 @@ window.AEGIS_CONFIG = {
   // slower beat.
   refreshMs: 5000,
   logsRefreshMs: 20000,
+
+  // ---- interactive layer (interact.js) ----
+  //
+  // Everything below is used only by the "Try it yourself" section. The
+  // read-only dashboard above does not touch any of it, so removing this block
+  // disables the write path and leaves the rest of the page working.
+
+  chainId: 114,
+  chainIdHex: '0x72',
+  faucetUrl: 'https://faucet.flare.network/coston2',
+
+  // The FDC's off-chain half. Both are Flare's public testnet services, the same
+  // defaults go/tools/pkg/fdc/web2json.go uses, and both were checked to allow
+  // cross-origin calls from a browser.
+  //
+  // One difference from the Go client is deliberate and load bearing: requests to
+  // the DA Layer must not carry X-API-KEY. Its CORS preflight allows content-type
+  // but not x-api-key, so a browser sending the key is blocked before the request
+  // leaves. The endpoint serves public testnet data without it. The verifier, by
+  // contrast, allows the header and gets it.
+  fdcVerifierUrl: 'https://fdc-verifiers-testnet.flare.network',
+  fdcDaLayerUrl: 'https://ctn2-data-availability.flare.network',
+  fdcApiKey: '00000000-0000-0000-0000-000000000000',
+
+  // Copied from config/coston2/deployed-addresses.json, the same file the Go
+  // tooling resolves these from.
+  fdcHub: '0x48aC463d7975828989331F4De43341627b9c5f1D',
+  flareSystemsManager: '0xA90Db6D10F856799b10ef2A77EBCbF460aC71e52',
+
+  // The signed decision the settle call needs lives behind the extension proxy,
+  // which sets no CORS header, so a browser cannot read it directly.
+  // scripts/result-bridge.sh publishes that one route on loopback. Without the
+  // bridge, evaluation still works and only the settle step reports it is
+  // unreachable.
+  resultUrl: 'http://127.0.0.1:7704',
+
+  // Policies a visitor may try. Written by aegis register-model --web-config,
+  // and every entry is verified against policyTriggerRequestHash on chain before
+  // the page offers it.
+  policiesUrl: 'policies.json',
 };

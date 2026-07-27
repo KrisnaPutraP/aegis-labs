@@ -9,6 +9,10 @@
 <link rel="stylesheet" href="styles.css">
 <script src="config.js" defer></script>
 <script src="app.js" defer></script>
+<!-- The write path is a separate layer. If it fails to load or the browser has
+     no wallet, everything above still works as a read-only dashboard. -->
+<script src="abi.js" defer></script>
+<script src="interact.js" defer></script>
 </head>
 <body>
 
@@ -197,8 +201,40 @@
     </article>
   </section>
 
+  <!-- 5. Try it yourself. Everything above reads the chain and needs no wallet.
+       This section is the only part that writes, and it degrades to disabled
+       buttons with an explanation when there is no wallet on the right chain. -->
+  <section class="section" id="try">
+    <div class="section__head">
+      <p class="section__kicker">RUN IT WITH YOUR OWN WALLET</p>
+      <h2 class="section__title">Try it yourself</h2>
+      <p class="section__lede">Both actions below are permissionless on the deployed contracts, so you can run them from your own account without anyone granting you anything. You will request a real FDC attestation, wait for a Flare voting round, and settle whatever the sealed model decides.</p>
+    </div>
+
+    <div class="wallet">
+      <div class="wallet__row">
+        <button class="trybtn" id="wallet-connect" type="button">connect wallet</button>
+        <button class="trybtn trybtn--ghost" id="wallet-switch" type="button" hidden>switch to Coston2</button>
+        <span class="wallet__field"><span class="wallet__label">account</span><span class="mono" id="wallet-address">not connected</span></span>
+        <span class="wallet__field"><span class="wallet__label">balance</span><span class="mono" id="wallet-balance">--</span></span>
+        <a class="wallet__faucet" id="wallet-faucet" href="#" target="_blank" rel="noopener">get free C2FLR from the faucet</a>
+      </div>
+      <p class="wallet__note" id="wallet-note">Connect a wallet to run an evaluation. Reading the dashboard needs no wallet at all.</p>
+    </div>
+
+    <div class="trylist" id="try-open"></div>
+    <p class="try__note" id="try-empty" hidden>Loading the policy list.</p>
+
+    <div id="try-history-wrap" hidden>
+      <h3 class="try__subhead">Already settled</h3>
+      <div class="tryhistory" id="try-history"></div>
+    </div>
+
+    <p class="try__foot">A policy pays at most once and then closes, so each entry above is single use. The wait for a voting round is 90 to 180 seconds and cannot be shortened, so the log tells you which round it is waiting on rather than showing a spinner. Settling needs the enclave's signed result, which is served by the read-only bridge in <span class="mono">scripts/result-bridge.sh</span>.</p>
+  </section>
+
   <footer class="footer">
-    <p>Read-only demo. This page never connects a wallet and never sends a transaction, it only reads Coston2.</p>
+    <p>The dashboard is read-only and needs no wallet. The "Try it yourself" section is the only part that sends a transaction, and it signs everything through your own wallet. This page never asks for, stores, or transmits a private key.</p>
     <p>Contract state comes from the Coston2 RPC endpoint, event history from the Coston2 explorer API, and enclave state from the extension's own <span class="mono">GET /state</span> endpoint.</p>
     <p>Hero photograph by Sergio Capuzzimati on Unsplash.</p>
   </footer>
