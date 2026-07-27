@@ -46,6 +46,7 @@ Flags:
 	flags := addCommonFlags(fs, true)
 	modelFile := fs.String("model-file", "", "read model parameters from a JSON file instead of the demo model")
 	forceNew := fs.Bool("new", false, "mint a fresh policy id even if an unsettled one exists")
+	webConfig := fs.String("web-config", "", "also record this policy in the web demo's policy list, e.g. web/policies.json")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -123,6 +124,15 @@ Flags:
 	}
 	if err := state.saveWith(record); err != nil {
 		return err
+	}
+
+	// Recorded only after the model is loaded, so the list the web demo offers
+	// never contains a policy the enclave cannot score.
+	if *webConfig != "" {
+		if err := upsertWebPolicy(*webConfig, record, template); err != nil {
+			return err
+		}
+		field("web config", "recorded in %s", *webConfig)
 	}
 
 	headline("Model sealed in enclave. Plaintext never left this process.")
