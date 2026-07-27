@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 #
-# Serve the read-only web demo in web/.
+# Serve the web demo in web/.
 #
 # The page is plain HTML, CSS and JavaScript with no build step and no
-# dependencies, so any static server works. This one also starts the read-only
-# enclave state bridge when the stack is running, because the sealed model panel
-# reads GET /state through it.
+# dependencies, so any static server works. This one also starts the two
+# read-only bridges when the stack is running, because two panels reach past the
+# chain: the sealed model panel reads GET /state, and settling from the browser
+# reads the enclave's signed result.
 #
-# The page reads Coston2 and nothing else. It connects no wallet and sends no
-# transaction.
+# The dashboard reads Coston2 and needs no wallet. The "Try it yourself" section
+# is the only part that sends a transaction, and it signs through the visitor's
+# own wallet. Nothing here ever handles a private key.
 #
 # Usage:
 #   ./scripts/demo-web.sh            # serve on http://127.0.0.1:5173
@@ -45,7 +47,17 @@ else
     warn "the dashboard still reads Coston2, and the reveal button will report the endpoint as unreachable."
 fi
 
+# Settling from the browser needs the enclave's signed result, and the extension
+# proxy serves it without a CORS header. Evaluation works without this bridge;
+# only the settle step reports the result as unreachable.
+if docker ps --filter label=com.docker.compose.service=ext-proxy --format '{{.Names}}' | grep -q .; then
+    log "starting the read-only action result bridge"
+    "$SCRIPT_DIR/result-bridge.sh" start
+else
+    warn "the extension proxy is not running, so settling from the browser has no route to the signed result."
+fi
+
 log "serving $PROJECT_DIR/web on http://127.0.0.1:${PORT}"
-log "stop with Ctrl-C, then ./scripts/state-bridge.sh stop"
+log "stop with Ctrl-C, then ./scripts/state-bridge.sh stop and ./scripts/result-bridge.sh stop"
 cd "$PROJECT_DIR/web"
 exec python3 -m http.server "$PORT" --bind 127.0.0.1
