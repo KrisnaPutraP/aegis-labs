@@ -12,6 +12,7 @@ smallholder farmers, and the engine underneath is not specific to weather.
 
 - Repository: https://github.com/KrisnaPutraP/aegis-labs
 - Demo video: [VIDEO_LINK]
+- Live demo (read only, 24/7): https://aegis-flare.vercel.app
 - Live on Coston2, with contract addresses and settled transactions under
   [Live deployment](#live-deployment-on-coston2)
 
@@ -285,23 +286,53 @@ for what each step is doing.
 
 ### Web
 
-A single read only page: a hero, then a dashboard that reads Coston2 live while it
-is open. No wallet connection, no signer, no write path in the code at all.
+One page, served two ways, and it decides which it is from the address it was
+loaded from.
+
+**Read only dashboard, hosted: https://aegis-flare.vercel.app**
+
+This is the copy a reviewer can open at any hour. It reads Coston2 directly
+through the public RPC and the explorer API, so it depends on no laptop, no
+enclave and no wallet, and it keeps working while the stack is off. It shows the
+sealed model as five masked fields next to the enclave's state, the chain of
+trust for the policy that paid (data, attestation, signature, payout), and the
+settlement record with the two seasons side by side. The "try to reveal
+parameters" button issues a real request to the enclave when the page is served
+locally, and on the hosted copy replays the recorded response under a label that
+says it is a recording. Anything not on chain yet renders as an empty state.
+There is no mock data on the page.
+
+**Interactive layer, local, while the stack is running**
 
 ```bash
 ./scripts/demo-web.sh          # serves http://127.0.0.1:5173
 ```
 
-It shows the sealed model as five masked fields next to the enclave's live state,
-the chain of trust for the policy that paid (data, attestation, signature,
-payout), and the settlement record with the two seasons side by side. The "try to
-reveal parameters" button issues a real request to the enclave and prints the
-response verbatim. With the bridge stopped it reports that the endpoint was
-unreachable and that nothing was proved, rather than claiming a refusal it never
-observed.
+Served from the same directory, the page adds a "Try it yourself" section:
+connect a wallet, pay the FDC attestation fee, wait for the voting round to
+finalize, evaluate a policy against the retrieved proof, and settle the enclave's
+signed decision. Both calls were already permissionless on the deployed
+contracts, so this runs from a visitor's own non-owner account with nothing
+loosened for the demo, and it needs the enclave to be up, because the settlement
+step submits a signature only a running enclave can produce. `demo-web.sh` starts
+the two read only bridges that give the browser a route to `GET /state` and to
+the signed result.
 
-Anything not on chain yet renders as an empty state. There is no mock data on the
-page.
+The hosted copy does not offer these buttons. It states that interactive actions
+require the live enclave and points at the video, rather than showing an action
+that could never complete.
+
+**Why the write path is not exposed publicly, around the clock**
+
+This is a property of the trust model, not a shortage of hosting. Aegis rests on
+an enclave that nobody can reach into, including its operator. An enclave parked
+on the public internet so that anybody may call it at any time would be arguing
+against its own premise. So the signing side runs when the operator runs it, and
+everything it produces is permanent and on chain: the decision, the signature,
+the TEE identity that made it, the transfer. A reviewer does not have to catch
+the enclave online to check the work, because the evidence outlives the session
+that created it. Read only in public is the trust model showing through, not a
+concession.
 
 ### Running it yourself
 
