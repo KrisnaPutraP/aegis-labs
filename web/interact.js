@@ -28,6 +28,18 @@
   const CFG = window.AEGIS_CONFIG;
   const ABI = window.AEGIS_ABI;
 
+  // A hosted copy of this page cannot run these actions, and the reason is the
+  // architecture rather than a missing feature. Settlement needs the decision
+  // the enclave signed, and only the running enclave can produce that signature.
+  // The enclave runs on the operator's machine and is deliberately not published,
+  // so a page served from static hosting has no path to one.
+  //
+  // Offering the buttons anyway would be worse than not offering them: an
+  // evaluation is a real transaction with a real FDC fee, and its result could
+  // never be settled from here. So the hosted build states the limit, keeps the
+  // policy list readable, and points at the recording.
+  const HOSTED = CFG && CFG.profile === 'hosted';
+
   // Mirrors cmd/aegis: three voting rounds per request, four minutes on each,
   // polled every fifteen seconds. Matching the CLI matters because the CLI is
   // the fallback path for the same demo, and two different timings would make
@@ -479,6 +491,10 @@
       return card;
     }
 
+    // Hosted: the card stays, because what it says about the policy is read from
+    // the chain and true. The actions do not, because they cannot complete.
+    if (HOSTED) return card;
+
     const actions = el('div', 'trycard__actions');
     const runBtn = el('button', 'trybtn', 'run evaluation');
     runBtn.type = 'button';
@@ -826,6 +842,7 @@
 
   function start() {
     if (!CFG || !ABI) return;
+    if (HOSTED) return startHosted();
 
     $('wallet-connect').addEventListener('click', connect);
     $('wallet-switch').addEventListener('click', () => {
@@ -863,6 +880,48 @@
     }
 
     loadPolicies();
+  }
+
+  // startHosted renders the same policy list, read from the same chain, and
+  // replaces the wallet controls with the reason there are none. No wallet is
+  // requested, no provider is touched, and nothing here can send a transaction.
+  function startHosted() {
+    const wallet = document.querySelector('.wallet');
+    if (wallet) wallet.hidden = true;
+
+    setText('try-lede',
+      'Both actions are permissionless on the deployed contracts, and the recording shows them being run ' +
+      'from an ordinary account that owns nothing here. They are not offered on this page: settling needs ' +
+      'the decision the enclave signed, the enclave runs on the operator\'s machine, and this page is hosted ' +
+      'with no route to it. The policies below are read live from Coston2 and are real.');
+
+    const notice = el('p', 'try__note');
+    notice.appendChild(document.createTextNode(
+      'Interactive actions require the live enclave. See the demo video for a full run, from the attestation ' +
+      'request through the signed decision to the payout. Everything that run produced is on chain and is ' +
+      'linked from this page.'));
+    if (CFG.recordingUrl) {
+      notice.appendChild(document.createTextNode(' '));
+      const link = el('a', null, 'watch the recorded run');
+      link.href = CFG.recordingUrl;
+      link.target = '_blank';
+      link.rel = 'noopener';
+      notice.appendChild(link);
+    }
+    const list = $('try-open');
+    if (list && list.parentNode) list.parentNode.insertBefore(notice, list);
+
+    setText('try-foot',
+      'A policy pays at most once and then closes, which is why the settled ones below cannot be run again. ' +
+      'To run one yourself, clone the repository and follow README.md: the same contracts, the same public ' +
+      'testnet, and your own enclave.');
+
+    loadPolicies();
+  }
+
+  function setText(id, text) {
+    const node = $(id);
+    if (node) node.textContent = text;
   }
 
   if (document.readyState === 'loading') {

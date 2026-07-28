@@ -85,8 +85,8 @@
         <p class="card__foot">Field names are public, from the extension's type definition. The values are decrypted inside the enclave and held in RAM, which is also why a restart requires the insurer to register the model again.</p>
       </article>
 
-      <article class="card">
-        <h3 class="card__title">Enclave state, read live</h3>
+      <article class="card" id="state-card">
+        <h3 class="card__title" id="state-card-title">Enclave state, read live</h3>
         <dl class="kv">
           <div class="kv__row"><dt>Models loaded</dt><dd class="mono" id="state-models">--</dd></div>
           <div class="kv__row"><dt>State version</dt><dd class="mono" id="state-version">--</dd></div>
@@ -98,6 +98,9 @@
         <button class="reveal-btn" id="reveal-btn" type="button">try to reveal parameters</button>
         <div class="reveal-out" id="reveal-out" aria-live="polite" hidden></div>
         <p class="card__foot">The button issues a real request to the enclave's state endpoint and prints whatever comes back.</p>
+        <!-- Filled in only by the hosted build, which has no route to the
+             enclave and says so rather than showing a dead endpoint. -->
+        <p class="card__foot" id="state-note" hidden></p>
       </article>
     </div>
   </section>
@@ -208,7 +211,7 @@
     <div class="section__head">
       <p class="section__kicker">RUN IT WITH YOUR OWN WALLET</p>
       <h2 class="section__title">Try it yourself</h2>
-      <p class="section__lede">Both actions below are permissionless on the deployed contracts, so you can run them from your own account without anyone granting you anything. You will request a real FDC attestation, wait for a Flare voting round, and settle whatever the sealed model decides.</p>
+      <p class="section__lede" id="try-lede">Both actions below are permissionless on the deployed contracts, so you can run them from your own account without anyone granting you anything. You will request a real FDC attestation, wait for a Flare voting round, and settle whatever the sealed model decides.</p>
     </div>
 
     <div class="wallet">
@@ -230,12 +233,12 @@
       <div class="tryhistory" id="try-history"></div>
     </div>
 
-    <p class="try__foot">A policy pays at most once and then closes, so each entry above is single use. The wait for a voting round is 90 to 180 seconds and cannot be shortened, so the log tells you which round it is waiting on rather than showing a spinner. Settling needs the enclave's signed result, which is served by the read-only bridge in <span class="mono">scripts/result-bridge.sh</span>.</p>
+    <p class="try__foot" id="try-foot">A policy pays at most once and then closes, so each entry above is single use. The wait for a voting round is 90 to 180 seconds and cannot be shortened, so the log tells you which round it is waiting on rather than showing a spinner. Settling needs the enclave's signed result, which is served by the read-only bridge in <span class="mono">scripts/result-bridge.sh</span>.</p>
   </section>
 
   <footer class="footer">
     <p>The dashboard is read-only and needs no wallet. The "Try it yourself" section is the only part that sends a transaction, and it signs everything through your own wallet. This page never asks for, stores, or transmits a private key.</p>
-    <p>Contract state comes from the Coston2 RPC endpoint, event history from the Coston2 explorer API, and enclave state from the extension's own <span class="mono">GET /state</span> endpoint.</p>
+    <p id="footer-sources">Contract state comes from the Coston2 RPC endpoint, event history from the Coston2 explorer API, and enclave state from the extension's own <span class="mono">GET /state</span> endpoint.</p>
     <p>Hero photograph by Sergio Capuzzimati on Unsplash.</p>
   </footer>
 

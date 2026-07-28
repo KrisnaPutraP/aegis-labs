@@ -16,6 +16,19 @@
 
 const CFG = window.AEGIS_CONFIG;
 
+// Which copy of this page is running.
+//
+// 'local' is served next to the stack, so the enclave answers for itself and
+// every panel is live. 'hosted' is served from static hosting, where there is no
+// route to the enclave and never will be: the enclave runs on the operator's
+// machine, and publishing a path to it is exactly what this project does not do.
+//
+// That is a deployment fact, not a failure, so the hosted page states it instead
+// of rendering an unreachable endpoint as an error. Everything else on the page
+// comes from the public Coston2 RPC and the explorer, which need nothing from
+// the operator at all.
+const HOSTED = CFG.profile === 'hosted';
+
 // Function selectors, taken from the signatures in contracts/. Kept as
 // constants so the page needs no ABI encoder for calls this simple.
 const SEL = {
@@ -263,6 +276,8 @@ async function teeSignature(txHash) {
 // ------------------------------------------------------------ enclave state
 
 async function readEnclaveState() {
+  if (HOSTED) return readEnclaveRecording();
+
   const res = await fetch(CFG.stateUrl, { cache: 'no-store' });
   const text = (await res.text()).trim();
   let parsed = null;
@@ -274,15 +289,96 @@ async function readEnclaveState() {
   return { ok: res.ok, status: res.status, text, parsed };
 }
 
+// readEnclaveRecording reads what the enclave answered when the page was built,
+// captured by scripts/build-web-vercel.sh from the same GET /state the local
+// page calls live.
+//
+// It is a recording and is labelled as one everywhere it is shown. The body is
+// stored and replayed verbatim rather than summarised, because the point of this
+// panel is what the enclave says for itself, and a summary written here would be
+// this page's claim instead.
+let recordingRequest = null;
+async function readEnclaveRecording() {
+  // A recording does not change while the page is open, so the refresh loop
+  // reads it once and reuses the answer.
+  if (!recordingRequest) {
+    recordingRequest = fetchEnclaveRecording().catch((err) => {
+      recordingRequest = null;
+      throw err;
+    });
+  }
+  return recordingRequest;
+}
+
+async function fetchEnclaveRecording() {
+  const res = await fetch(CFG.enclaveSnapshotUrl, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`no recording at ${CFG.enclaveSnapshotUrl}`);
+
+  const snapshot = await res.json();
+  const text = String(snapshot.body || '').trim();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    parsed = null;
+  }
+  return {
+    ok: snapshot.httpStatus === 200,
+    status: snapshot.httpStatus,
+    text,
+    parsed,
+    recorded: true,
+    capturedAt: snapshot.capturedAt,
+    endpoint: snapshot.endpoint,
+  };
+}
+
 function renderEnclaveState(result) {
   if (!result || !result.ok || !result.parsed) {
+    // A hosted page has no live endpoint to lose, so an absent recording means
+    // the panel has nothing honest to say and is removed rather than filled
+    // with the word unreachable.
+    if (HOSTED) {
+      hide('state-card');
+      return;
+    }
     setText('state-models', 'unreachable');
     setText('state-version', 'unreachable');
     return;
   }
+
   const models = result.parsed.state && result.parsed.state.registeredModels;
   setText('state-models', models === undefined ? 'unreachable' : String(models));
   setText('state-version', hexToAscii(result.parsed.stateVersion || '0x') || 'unknown');
+
+  if (result.recorded) {
+    setText('state-card-title', 'Enclave state, last known');
+    const note = $('state-note');
+    if (note) {
+      note.textContent =
+        `Recorded ${describeCapture(result.capturedAt)} from the enclave's own GET /state. ` +
+        'This page is hosted, and the enclave runs on the operator\'s machine, so there is no live route to it from here. ' +
+        'The panels above and below are read live from Coston2 and need nobody to be online.';
+      note.hidden = false;
+    }
+  }
+}
+
+// describeCapture renders a capture time as something a reader can judge for
+// themselves: the timestamp, plus how long ago it was.
+function describeCapture(iso) {
+  if (!iso) return 'at an unrecorded time';
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return `at ${iso}`;
+
+  const days = Math.floor((Date.now() - when.getTime()) / 86400000);
+  const ago = days <= 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`;
+  return `${when.toISOString().replace('T', ' ').slice(0, 16)} UTC, ${ago}`;
+}
+
+function hide(id) {
+  const node = $(id);
+  if (node) node.hidden = true;
 }
 
 // The reveal button runs the attempt for real. Whatever the endpoint answers is
@@ -293,7 +389,9 @@ async function onReveal() {
   const out = $('reveal-out');
   button.disabled = true;
   out.hidden = false;
-  out.innerHTML = '<p class="reveal-out__raw">requesting GET /state ...</p>';
+  out.innerHTML = HOSTED
+    ? '<p class="reveal-out__raw">replaying the recorded attempt ...</p>'
+    : '<p class="reveal-out__raw">requesting GET /state ...</p>';
 
   let verdict;
   let verdictClass = '';
@@ -305,16 +403,26 @@ async function onReveal() {
     raw = result.text || '(empty response)';
     if (result.ok && result.parsed) {
       verdict = 'Denied by architecture: GET /state returns only the model count, never its contents.';
-      hint = `HTTP ${result.status} from ${CFG.stateUrl}. The response carries a count and a version string. There is no route on the enclave that returns a model, because nothing in the extension ever serializes one back out.`;
+      hint = result.recorded
+        ? `HTTP ${result.status}, recorded ${describeCapture(result.capturedAt)} from ${result.endpoint || 'the enclave state endpoint'}. This is a replay, not a live call, because a hosted page has no route to the enclave. The response carries a count and a version string. There is no route on the enclave that returns a model, because nothing in the extension ever serializes one back out. The demo video shows the same request made live.`
+        : `HTTP ${result.status} from ${CFG.stateUrl}. The response carries a count and a version string. There is no route on the enclave that returns a model, because nothing in the extension ever serializes one back out.`;
     } else {
       verdict = `The enclave answered HTTP ${result.status}, and it still did not carry a parameter.`;
-      hint = `Raw response from ${CFG.stateUrl}.`;
+      hint = result.recorded
+        ? `Recorded ${describeCapture(result.capturedAt)}, replayed here verbatim.`
+        : `Raw response from ${CFG.stateUrl}.`;
     }
   } catch (err) {
     verdictClass = ' is-error';
-    verdict = 'The enclave state endpoint is not reachable from this browser.';
-    raw = String(err && err.message ? err.message : err);
-    hint = `Nothing was revealed, but nothing was proved either. Start the read-only bridge with ./scripts/state-bridge.sh start and press the button again to see the enclave answer for itself.`;
+    if (HOSTED) {
+      verdict = 'This hosted copy carries no recording of the attempt.';
+      raw = String(err && err.message ? err.message : err);
+      hint = 'Nothing is claimed here that was not observed. The demo video shows the request being made against the running enclave, and anyone can reproduce it locally with ./scripts/state-bridge.sh start.';
+    } else {
+      verdict = 'The enclave state endpoint is not reachable from this browser.';
+      raw = String(err && err.message ? err.message : err);
+      hint = 'Nothing was revealed, but nothing was proved either. Start the read-only bridge with ./scripts/state-bridge.sh start and press the button again to see the enclave answer for itself.';
+    }
   }
 
   out.innerHTML = '';
@@ -570,6 +678,17 @@ async function refresh() {
 }
 
 function start() {
+  if (HOSTED) {
+    // The label has to match what the button does. Live it makes a request;
+    // hosted it replays one that was made.
+    setText('reveal-btn', 'show the recorded attempt');
+    if (!CFG.enclaveSnapshotUrl) hide('state-card');
+    setText('footer-sources',
+      'Contract state comes from the Coston2 RPC endpoint and event history from the Coston2 explorer API, ' +
+      'both public, which is why this page keeps working with nobody online. The enclave panel is a recording, ' +
+      'because the enclave runs on the operator\'s machine and is not published.');
+  }
+
   $('reveal-btn').addEventListener('click', onReveal);
   refresh();
   setInterval(refresh, CFG.refreshMs);

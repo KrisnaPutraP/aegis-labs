@@ -1,0 +1,7 @@
+{
+  "capturedAt": "2026-07-28T03:11:46Z",
+  "endpoint": "http://127.0.0.1:7703/state",
+  "httpStatus": 200,
+  "body": "{\"stateVersion\":\"0x302e312e30000000000000000000000000000000000000000000000000000000\",\"state\":{\"registeredModels\":4}}",
+  "note": "Recorded by scripts/record-enclave-state.sh. The hosted page replays this verbatim and labels it as a recording, because static hosting has no route to the enclave. A model count and a version string are all this endpoint has ever returned."
+}

@@ -8,7 +8,37 @@
 // and the TEE machine registry from PolicySettlement.TEE_MACHINE_REGISTRY().
 // That way an executor swap (the D4 seam) shows up on this page without anyone
 // editing it.
+// Which copy of the page this is, decided by where it is being served from.
+//
+// 'local' means it sits beside the running stack: the enclave answers its own
+// state endpoint and the wallet actions can complete, because the signed
+// decision they settle is reachable. 'hosted' means static hosting, where there
+// is no route to the enclave and never will be, since the enclave runs on the
+// operator's machine and is deliberately not published.
+//
+// It is decided here rather than configured because the same directory is
+// deployed both ways, with no build step in between. A page served from a
+// private address is still the operator's own machine, which is how the demo is
+// recorded from a phone, so those count as local too.
+function aegisProfile() {
+  const host = location.hostname;
+  if (location.protocol === 'file:' || host === '' || host === 'localhost') return 'local';
+  if (host === '127.0.0.1' || host === '::1' || host === '[::1]') return 'local';
+  if (/^10\./.test(host)) return 'local';
+  if (/^192\.168\./.test(host)) return 'local';
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return 'local';
+  return 'hosted';
+}
+
 window.AEGIS_CONFIG = {
+  profile: aegisProfile(),
+
+  // Read by the hosted profile only: what GET /state answered when
+  // scripts/record-enclave-state.sh last ran, and the demo video, once there is
+  // one. The local page calls the enclave live and ignores both.
+  enclaveSnapshotUrl: 'enclave-snapshot.json',
+  recordingUrl: '',
+
   rpcUrl: 'https://coston2-api.flare.network/ext/C/rpc',
   explorerUrl: 'https://coston2-explorer.flare.network',
 

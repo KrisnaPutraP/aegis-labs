@@ -35,6 +35,58 @@ running. To control that separately:
 Any static server works just as well, for example
 `python3 -m http.server 5173 --directory web`.
 
+## Two profiles, one directory
+
+The same files are served two ways, and the page decides which it is by the
+address it was loaded from (`aegisProfile()` in `config.js`).
+
+| | Local | Hosted |
+|---|---|---|
+| Served from | localhost, a loopback address, or a private LAN address | anywhere else, such as Vercel |
+| Contract state, events, pool, settlements | live from the public Coston2 RPC and explorer | the same, unchanged |
+| Enclave panel | live `GET /state` through the bridge | replays `enclave-snapshot.json` under a "last known state" label |
+| Reveal button | issues the request for real | replays the recorded response, labelled as recorded |
+| Try it yourself | wallet actions run | actions are not offered, and the section says why |
+
+The split exists because of what the product is. Settling needs the decision the
+enclave signed, and only the running enclave can produce that signature. The
+enclave runs on the operator's machine and is deliberately not published, so a
+hosted page cannot complete those actions and does not pretend it might. It
+states the limit and points at the recording, rather than offering buttons that
+would spend a real attestation fee on an evaluation that could never settle.
+
+Everything else on the page needs nobody to be online, which is the whole reason
+the hosted copy is worth having: it keeps working while the laptop is off.
+
+## Deploying the hosted copy
+
+Refresh the enclave recording first, while the stack is up:
+
+```bash
+./scripts/record-enclave-state.sh      # writes web/enclave-snapshot.json
+```
+
+Delete that file to drop the panel entirely. The hosted page removes it rather
+than rendering an endpoint it cannot reach.
+
+Then deploy this directory as a static site:
+
+```bash
+npx vercel login                 # once
+npx vercel deploy web            # preview url
+npx vercel deploy --prod web     # production url
+```
+
+Answer "Other" if the framework is asked for. There is no build step: the files
+are served exactly as they are.
+
+Importing the repository from the Vercel dashboard works too. Set **Root
+Directory** to `web` and the framework preset to **Other**.
+
+`vercel.json` in this directory keeps `config.js`, `policies.json` and
+`enclave-snapshot.json` out of the CDN cache, since those are what change between
+deployments.
+
 ## Where each number comes from
 
 | Panel | Source |
