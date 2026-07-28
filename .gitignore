@@ -22,6 +22,10 @@ config/extension.env
 config/settlement.env
 # Policy ids the demo CLI keeps between commands
 config/demo-state.json
+# Insurer model parameters read by "aegis reregister-all". These are the secret
+# the whole product is built around: they belong on the operator's machine and
+# never in the repository.
+config/demo-models/
 config/register-tee.state
 config/**/*.log
 

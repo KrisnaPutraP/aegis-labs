@@ -15,6 +15,8 @@
 //
 //	register-model  bind the policy to one attestation request, then seal the
 //	                insurer's model to the enclave public key and load it
+//	reregister-all  load the demo models back in after the enclave restarted,
+//	                from the operator's local parameter files
 //	evaluate        request an FDC attestation, wait for the round, score the
 //	                attested reading in the enclave, settle the signed decision
 //	reveal          try to read the model back out of the enclave and fail
@@ -38,6 +40,8 @@ func main() {
 	switch os.Args[1] {
 	case "register-model":
 		err = runRegisterModel(args)
+	case "reregister-all":
+		err = runReregisterAll(args)
 	case "evaluate":
 		err = runEvaluate(args)
 	case "reveal":
@@ -70,6 +74,7 @@ Usage:
 
 Commands:
   register-model   Bind a policy to its weather feed and seal the insurer's model into the enclave
+  reregister-all   Load the demo models back into the enclave after a restart emptied it
   evaluate         Attest the weather, score it in the enclave, and settle the signed decision
   reveal           Try to read the model parameters out of the enclave, and watch it refuse
   status           Read the policy, the payout pool and the settlement record from the chain
@@ -86,6 +91,11 @@ A typical demo:
   aegis reveal
   aegis evaluate --policy drought-surabaya
   aegis status --policy drought-surabaya
+
+Restarting the stack empties the enclave, because a model lives in its memory
+and nowhere else. One command puts every policy that is still open back in
+reach, from the operator's local parameter files:
+  aegis reregister-all
 
 Every command takes --help. Endpoints and contract addresses are read from .env,
 config/extension.env and config/settlement.env, so there is nothing to type

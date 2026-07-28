@@ -122,6 +122,26 @@ func upsertWebPolicy(path string, record *policyRecord, template policyTemplate)
 	return nil
 }
 
+// readWebPolicies returns the policies the web demo offers, or nothing at all if
+// the file has never been written. A missing file is not an error: a deployment
+// that only ever used the CLI has no web config, and reregister-all still has
+// the state file to work from.
+func readWebPolicies(path string) ([]webPolicy, error) {
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, errors.Errorf("reading %s: %s", path, err)
+	}
+
+	var file webPolicyFile
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return nil, errors.Errorf("parsing %s: %s", path, err)
+	}
+	return file.Policies, nil
+}
+
 func toWebRequestBody(rb sign.IWeb2JsonRequestBody) webRequestBody {
 	return webRequestBody{
 		URL:           rb.Url,
