@@ -77,15 +77,24 @@ npx vercel deploy web            # preview url
 npx vercel deploy --prod web     # production url
 ```
 
-Answer "Other" if the framework is asked for. There is no build step: the files
-are served exactly as they are.
+There is no build step: the files are served exactly as they are. The first
+deployment of a new project goes straight to production; after that, `deploy`
+makes a preview and `--prod` is what publishes.
 
 Importing the repository from the Vercel dashboard works too. Set **Root
-Directory** to `web` and the framework preset to **Other**.
+Directory** to `web`.
 
-`vercel.json` in this directory keeps `config.js`, `policies.json` and
-`enclave-snapshot.json` out of the CDN cache, since those are what change between
-deployments.
+`vercel.json` in this directory carries the settings that must not be left to a
+prompt:
+
+- `outputDirectory: "."`. This directory contains a `public/` subfolder for
+  images, and Vercel's default for a project with no framework is to publish
+  `public` when it exists. That would put the pictures online and leave
+  `index.html` unreachable.
+- `framework`, `buildCommand` and `installCommand` set to null, because there is
+  nothing to build and no dependencies to install.
+- `Cache-Control: no-store` on `config.js`, `policies.json` and
+  `enclave-snapshot.json`, the three files that change between deployments.
 
 ## Where each number comes from
 
