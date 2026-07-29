@@ -37,7 +37,7 @@ window.AEGIS_CONFIG = {
   // scripts/record-enclave-state.sh last ran, and the demo video, once there is
   // one. The local page calls the enclave live and ignores both.
   enclaveSnapshotUrl: 'enclave-snapshot.json',
-  recordingUrl: '',
+  recordingUrl: 'https://youtu.be/hyK3Ldw0t-A',
 
   rpcUrl: 'https://coston2-api.flare.network/ext/C/rpc',
   explorerUrl: 'https://coston2-explorer.flare.network',

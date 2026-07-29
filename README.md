@@ -11,7 +11,7 @@ private scoring category. The first instantiation is parametric drought cover fo
 smallholder farmers, and the engine underneath is not specific to weather.
 
 - Repository: https://github.com/KrisnaPutraP/aegis-labs
-- Demo video: [VIDEO_LINK]
+- Demo video: https://youtu.be/hyK3Ldw0t-A
 - Live demo (read only, 24/7): https://aegis-flare.vercel.app
 - Live on Coston2, with contract addresses and settled transactions under
   [Live deployment](#live-deployment-on-coston2)
@@ -228,7 +228,7 @@ enclave, `InstructionSender` and every already settled policy are untouched.
 
 ## Demo
 
-Video: [VIDEO_LINK]
+Video: https://youtu.be/hyK3Ldw0t-A
 
 ### Command line
 
@@ -366,7 +366,13 @@ Everything below is on chain and can be opened in the explorer.
 | `FxrpPayoutExecutor` | [`0xBDCB786b6080bBf8D3CCF28419C08a3ac02E946b`](https://coston2-explorer.flare.network/address/0xBDCB786b6080bBf8D3CCF28419C08a3ac02E946b) |
 | FXRP (FTestXRP, 6 decimals) | [`0x0b6A3645c240605887a5532109323A3E12273dc7`](https://coston2-explorer.flare.network/address/0x0b6A3645c240605887a5532109323A3E12273dc7) |
 | TEE extension id | `65700` (`0x...0100a4`) |
-| TEE machine that signed | `0x14fB1e5cF7eAE49B421831761f569D3d15a790F8` |
+| TEE machine that signed the run below | `0x14fB1e5cF7eAE49B421831761f569D3d15a790F8` |
+
+A machine identity is per enclave process, not per deployment: the simulated TEE
+derives a new key every time the container starts, so the address that signs
+rotates and the retired one is paused in the registry. Whichever machine signed,
+`PolicySettlement` accepts it only if the registry says it belongs to this
+extension and is in `PRODUCTION`, which is the check that matters.
 
 One policy, end to end, driven from the CLI. Dry window over Surabaya, 1 June to
 31 August 2025, policy id
@@ -397,6 +403,25 @@ is a result a policyholder should be able to read rather than be told.
 
 That contrast is the demonstration. One model, one location, and an outcome that
 came entirely from data neither side chose.
+
+### The same path, run from a visitor's wallet
+
+The run above was driven from the CLI by the deployer. This one was driven from a
+browser by an ordinary account that owns nothing here, which is what the claim
+"permissionless" has to mean. Policy id
+`0xa3d1c3e99732e9de1cb6e5db6f2d4fb00c2e79514465a84f79292504963797d4`:
+
+| Step | Sent by | Transaction |
+|---|---|---|
+| Bind the policy to its feed | owner `0x24489d11...` | [`0x68215cc4...ea7f08af`](https://coston2-explorer.flare.network/tx/0x68215cc431a582b4f200f214c531b8c10691d388a5d620cb42ed7f7aea7f08af) |
+| Evaluate against the proof | visitor `0x162DB3e6...` | [`0xec61936f...78477eff`](https://coston2-explorer.flare.network/tx/0xec61936f80365a0295cbd8934272e6d3e8c2df773c7419a883b3e8ac78477eff) |
+| Settle and pay | visitor `0x162DB3e6...` | [`0xed601ca2...2ab4d265`](https://coston2-explorer.flare.network/tx/0xed601ca2e5d635488dbd710f02f620dec2eec39cd3d52ed06bd46f902ab4d265) |
+
+Attested rainfall 116.7 mm, voting round 1409753, paid **0.185625 FTestXRP** to
+the visitor's own address. Only the first row needed the owner, because
+registering a policy trigger is owner only in this deployment: opening it would
+open a path to drain the payout pool. Evaluating and settling were already
+permissionless on the deployed contracts, and nothing was loosened for the demo.
 
 ---
 
@@ -466,8 +491,9 @@ Kept plain, because an overstated number here is worth less than an honest one.
 - **Deployed:** Coston2, live. Contracts, addresses and settled transactions are
   listed above and can be opened in the explorer.
 - **Testing:** validated end to end on Coston2 with real FDC attestations and real
-  FXRP settlement, most recently on 26 July 2026. Both outcomes are covered: a
-  policy that pays, and a policy that closes owing nothing.
+  FXRP settlement, most recently on 29 July 2026, from the CLI and from a browser
+  wallet. Both outcomes are covered: a policy that pays, and a policy that closes
+  owing nothing.
 - **Users:** none. This has not been put in front of anybody outside the project,
   and there are no pilot users, partners or letters of intent to report.
 - **Distribution:** not started. The work so far has been technical.
@@ -538,8 +564,8 @@ than letting a reviewer find them.
 | `go/tools/pkg/payout/` | Signature recovery, settlement, and FAssets resolution |
 | `go/tools/cmd/aegis/` | The demo command line |
 | `go/tools/cmd/run-test/` | The end to end test, which reads as a narration of the whole path |
-| `web/` | The read only dashboard |
-| `scripts/` | Stack setup, the end to end run, the demo web server, and the read only state bridge |
+| `web/` | The read only dashboard, and the wallet layer served from the same directory |
+| `scripts/` | Stack setup, the end to end run, the demo web server, and the two read only bridges |
 
 The demo model's parameters live in `go/tools/cmd/run-test/main.go` and in the CLI,
 because in this demo the test plays the insurer, the one party that legitimately
